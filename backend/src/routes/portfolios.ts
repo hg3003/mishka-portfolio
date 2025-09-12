@@ -1,0 +1,566 @@
+// backend/src/routes/portfolios.ts
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { prisma } from '../utils/db';
+import { createPortfolioSchema } from '../schemas/validation';
+import { z } from 'zod';
+
+export async function portfolioRoutes(fastify: FastifyInstance) {
+  // GET /api/portfolios - List all generated portfolios
+  fastify.get('/portfolios', async (request, reply) => {
+    try {
+      const portfolios = await prisma.generatedPortfolio.findMany({
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: {
+                select: {
+                  projectName: true,
+                  projectType: true,
+                  location: true,
+                },
+              },
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+          _count: {
+            select: { projects: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return {
+        success: true,
+        data: portfolios,
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch portfolios',
+      });
+    }
+  });
+
+  // GET /api/portfolios/:id - Get single portfolio
+  fastify.get('/portfolios/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const portfolio = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: {
+                include: {
+                  assets: {
+                    orderBy: { displayOrder: 'asc' },
+                  },
+                },
+              },
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+        },
+      });
+
+      if (!portfolio) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      return {
+        success: true,
+        data: portfolio,
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch portfolio',
+      });
+    }
+  });
+
+
+  // POST /api/portfolios - Create new portfolio configuration
+  fastify.post('/portfolios', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      // Debug logging
+      fastify.log.info({ 
+        headers: request.headers,
+        bodyType: typeof request.body,
+        bodyKeys: request.body ? Object.keys(request.body) : 'undefined',
+        rawBody: request.body 
+      }, 'Portfolio create request received');
+
+      // Check if body exists
+      if (!request.body) {
+        fastify.log.error('Request body is missing');
+        return reply.code(400).send({
+          success: false,
+          error: 'Request body is missing. Please ensure Content-Type is application/json',
+        });
+      }
+
+      // Validate request body
+      const bodyValidation = createPortfolioSchema.safeParse(request.body);
+      
+      if (!bodyValidation.success) {
+        fastify.log.error({ 
+          errors: bodyValidation.error.errors,
+          receivedData: request.body 
+        }, 'Portfolio validation failed');
+        
+        return reply.code(400).send({
+          success: false,
+          error: 'Invalid portfolio data',
+          details: bodyValidation.error.errors,
+        });
+      }
+
+      const { projects, ...portfolioData } = bodyValidation.data;
+
+      fastify.log.info({ 
+        portfolioData, 
+        projectCount: projects.length 
+      }, 'Creating portfolio');
+
+      // Create portfolio with projects
+      const portfolio = await prisma.generatedPortfolio.create({
+        data: {
+          ...portfolioData,
+          projects: {
+            create: projects.map((p) => ({
+              projectId: p.projectId,
+              displayOrder: p.displayOrder,
+              includedAssets: p.includedAssets,
+            })),
+          },
+        },
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: {
+                select: {
+                  projectName: true,
+                  projectType: true,
+                },
+              },
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+        },
+      });
+
+      fastify.log.info({ portfolioId: portfolio.id }, 'Portfolio created successfully');
+
+      return reply.code(201).send({
+        success: true,
+        data: portfolio,
+      });
+    } catch (error) {
+      fastify.log.error({ 
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      }, 'Failed to create portfolio');
+      
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to create portfolio',
+        ...(process.env.NODE_ENV === 'development' && { 
+          details: error instanceof Error ? error.message : 'Unknown error' 
+        }),
+      });
+    }
+  });
+
+  // PUT /api/portfolios/:id - Update portfolio
+  fastify.put('/portfolios/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const updateSchema = z.object({
+        portfolioName: z.string().min(1).max(200).optional(),
+        portfolioType: z.enum(['SAMPLE', 'FULL']).optional(),
+        templateId: z.string().cuid().optional(),
+        cvIncluded: z.boolean().optional(),
+        settings: z.record(z.any()).optional(),
+      });
+
+      // Check if body exists
+      if (!request.body) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Request body is missing',
+        });
+      }
+
+      const bodyValidation = updateSchema.safeParse(request.body);
+      
+      if (!bodyValidation.success) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Invalid update data',
+          details: bodyValidation.error.errors,
+        });
+      }
+
+      // Check if portfolio exists
+      const existing = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      // Update portfolio
+      const portfolio = await prisma.generatedPortfolio.update({
+        where: { id: request.params.id },
+        data: bodyValidation.data,
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: true,
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+        },
+      });
+
+      return {
+        success: true,
+        data: portfolio,
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to update portfolio',
+      });
+    }
+  });
+
+  // DELETE /api/portfolios/:id - Delete portfolio
+  fastify.delete('/portfolios/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      // Check if portfolio exists
+      const existing = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      // Delete portfolio (junction table entries will cascade)
+      await prisma.generatedPortfolio.delete({
+        where: { id: request.params.id },
+      });
+
+      return {
+        success: true,
+        message: 'Portfolio deleted successfully',
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to delete portfolio',
+      });
+    }
+  });
+
+  // POST /api/portfolios/:id/add-project - Add project to existing portfolio
+  fastify.post('/portfolios/:id/add-project', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const bodySchema = z.object({
+        projectId: z.string().cuid(),
+        displayOrder: z.number().min(0).optional(),
+        includedAssets: z.array(z.string().cuid()).optional(),
+      });
+
+      // Check if body exists
+      if (!request.body) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Request body is missing',
+        });
+      }
+
+      const bodyValidation = bodySchema.safeParse(request.body);
+      
+      if (!bodyValidation.success) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Invalid project data',
+          details: bodyValidation.error.errors,
+        });
+      }
+
+      // Check if portfolio exists
+      const portfolio = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+        include: {
+          projects: true,
+        },
+      });
+
+      if (!portfolio) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      // Check if project exists
+      const project = await prisma.project.findUnique({
+        where: { id: bodyValidation.data.projectId },
+      });
+
+      if (!project) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Project not found',
+        });
+      }
+
+      // Check if project already in portfolio
+      const existing = portfolio.projects.find(
+        (p) => p.projectId === bodyValidation.data.projectId
+      );
+
+      if (existing) {
+        return reply.code(409).send({
+          success: false,
+          error: 'Project already in portfolio',
+        });
+      }
+
+      // Get max display order if not provided
+      const displayOrder = bodyValidation.data.displayOrder ?? 
+        Math.max(...portfolio.projects.map(p => p.displayOrder), -1) + 1;
+
+      // Add project to portfolio
+      const portfolioProject = await prisma.portfolioProject.create({
+        data: {
+          portfolioId: request.params.id,
+          projectId: bodyValidation.data.projectId,
+          displayOrder,
+          includedAssets: bodyValidation.data.includedAssets || [],
+        },
+        include: {
+          project: true,
+        },
+      });
+
+      return reply.code(201).send({
+        success: true,
+        data: portfolioProject,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to add project to portfolio',
+      });
+    }
+  });
+
+  // DELETE /api/portfolios/:id/remove-project/:projectId - Remove project from portfolio
+  fastify.delete('/portfolios/:portfolioId/remove-project/:projectId', 
+    async (request: FastifyRequest<{ Params: { portfolioId: string; projectId: string } }>, reply: FastifyReply) => {
+    try {
+      // Find the portfolio project entry
+      const portfolioProject = await prisma.portfolioProject.findFirst({
+        where: {
+          portfolioId: request.params.portfolioId,
+          projectId: request.params.projectId,
+        },
+      });
+
+      if (!portfolioProject) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Project not found in portfolio',
+        });
+      }
+
+      // Delete the junction entry
+      await prisma.portfolioProject.delete({
+        where: { id: portfolioProject.id },
+      });
+
+      return {
+        success: true,
+        message: 'Project removed from portfolio',
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to remove project from portfolio',
+      });
+    }
+  });
+
+  // GET /api/portfolios/:id/renderable - Build renderable JSON for HTML/print
+  fastify.get('/portfolios/:id/renderable', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const { buildRenderablePortfolio } = await import('../services/portfolioData');
+      const renderable = await buildRenderablePortfolio(request.params.id);
+      if (!renderable) {
+        return reply.code(404).send({ success: false, error: 'Portfolio not found or empty' });
+      }
+      return { success: true, data: renderable };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({ success: false, error: 'Failed to build renderable portfolio' });
+    }
+  });
+
+  // GET /api/portfolios/templates - Get available templates
+  fastify.get('/portfolios/templates', async (request, reply) => {
+    try {
+      const templates = await prisma.portfolioTemplate.findMany({
+        orderBy: { isDefault: 'desc' },
+      });
+
+      return {
+        success: true,
+        data: templates,
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch templates',
+      });
+    }
+  });
+
+  // POST /api/portfolios/:id/generate - Generate or regenerate PDF
+  fastify.post('/portfolios/:id/generate', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const existing = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+        include: { projects: true },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({ success: false, error: 'Portfolio not found' });
+      }
+      if (!existing.projects.length) {
+        return reply.code(400).send({ success: false, error: 'Cannot generate PDF: no projects selected' });
+      }
+
+      fastify.log.info({ 
+        portfolioId: request.params.id,
+        settings: existing.settings,
+        engine: 'playwright',
+      }, 'Generating PDF for portfolio (playwright)');
+
+      const { generatePortfolioPdfPlaywright } = await import('../services/playwrightGenerator');
+      const result = await generatePortfolioPdfPlaywright(request.params.id);
+
+      fastify.log.info({ 
+        portfolioId: request.params.id,
+        filePath: result.filePath,
+        fileSize: result.fileSize 
+      }, 'PDF generated successfully');
+
+      return reply.code(201).send({
+        success: true,
+        data: result,
+      });
+    } catch (error: any) {
+      if (error?.code === 'EMPTY_PORTFOLIO') {
+        return reply.code(400).send({ success: false, error: error.message });
+      }
+      if (error?.code === 'PLAYWRIGHT_MISSING') {
+        return reply.code(500).send({ success: false, error: error.message });
+      }
+      fastify.log.error({ 
+        error,
+        portfolioId: request.params.id,
+        message: error?.message 
+      }, 'Failed to generate PDF');
+      
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to generate PDF',
+        ...(process.env.NODE_ENV !== 'production' && { details: String(error?.message || error) }),
+      });
+    }
+  });
+
+  // POST /api/portfolios/:id/duplicate - Duplicate a portfolio
+  fastify.post('/portfolios/:id/duplicate', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      // Get original portfolio
+      const original = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+        include: {
+          projects: true,
+        },
+      });
+
+      if (!original) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      // Create duplicate
+      const duplicate = await prisma.generatedPortfolio.create({
+        data: {
+          portfolioName: `${original.portfolioName} (Copy)`,
+          portfolioType: original.portfolioType,
+          templateId: original.templateId,
+          cvIncluded: original.cvIncluded,
+          settings: original.settings,
+          projects: {
+            create: original.projects.map((p) => ({
+              projectId: p.projectId,
+              displayOrder: p.displayOrder,
+              includedAssets: p.includedAssets,
+              customLayout: p.customLayout,
+            })),
+          },
+        },
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: true,
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+        },
+      });
+
+      return reply.code(201).send({
+        success: true,
+        data: duplicate,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to duplicate portfolio',
+      });
+    }
+  });
+}

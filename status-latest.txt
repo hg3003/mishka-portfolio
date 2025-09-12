@@ -1,0 +1,227 @@
+Architecture Portfolio System – Project Continuation Guide (Updated)
+
+Project Overview
+
+Goal: Database-backed portfolio and CV management system that separates data from presentation, enabling flexible portfolio generation without the typical InDesign coupling.
+For: Your girlfriend (architect), personal, non-commercial.
+Key innovation: Single source of truth for content; multiple outputs (web, PDF) via templates.
+Current Project State
+
+Completed Phases (Days 1–6/7)
+
+Phase 1: Foundation
+SQLite + Prisma ORM
+Schema for projects, assets, CV, portfolios
+REST API with validation
+Seed data with 3 sample projects
+Phase 2: Core Backend
+File upload with Sharp optimization
+Thumbnails
+Asset management endpoints
+Portfolio configuration endpoints
+Phase 3: Frontend Foundation
+React + Vite + TypeScript
+Swiss design system (Helvetica, minimal)
+React Query integration
+Dashboard with statistics
+Phase 4: Project Management
+Projects list with search/filters
+Project detail with asset gallery + lightbox
+Asset upload/delete/reorder
+Hero image selection
+Phase 5: Project Forms
+Create/edit forms with Zod
+Dynamic field arrays
+RIBA stages tracking
+Phase 6: CV Management UI (Completed)
+CV page (tabs: Personal Info | Experience | Education | Skills) with live preview
+Personal Info:
+Explicit save (no blur autosave), “Saved” indicator
+Client-side sanitizer: trims, validates email/URL, omits empty optionals
+Experience:
+Add/edit, inline delete
+Reorder via displayOrder
+Required fields gating to prevent bad requests
+Client-side sanitizer: dates normalized, arrays trimmed
+Education:
+Degree type dropdown with normalization
+Coursework tag list, grade field
+Required fields gating
+Client-side sanitizer: dates normalized, empty fields omitted
+Skills:
+Grouped by category; add/edit/delete
+Proficiency and years experience
+Quick add common skills per category
+Accessibility and UX:
+All inputs have id/name with associated labels (no autofill/focus issues)
+Buttons use type="button" where appropriate
+Error handling:
+Detailed debug logging for save failures
+400 errors eliminated with sanitizers and server-side validator improvements
+Tech Stack & Architecture
+
+Backend (/backend)
+
+Port: 3001
+Stack: Fastify + TypeScript + Prisma + SQLite
+Key Files
+prisma/schema.prisma – Database schema
+src/index.ts – Server bootstrap, CORS with DELETE/PATCH allowed
+src/routes/projects.ts – Project CRUD
+src/routes/cv.ts – CV management (personal info, experience, education, skills)
+src/routes/assets.ts – File handling
+src/routes/portfolios.ts – Portfolio management
+src/services/uploadService.ts – Sharp processing
+NEW/UPDATED: src/schemas/validation.ts – Hardened Zod validators
+Accept both YYYY-MM-DD and full ISO for startDate/endDate
+Treat '' as undefined for optional strings (URLs, grade, etc.)
+Trim strings; coerce numbers
+Personal info URLs accept missing protocol (https:// added)
+Frontend (/frontend)
+
+Port: 5173
+Stack: React + Vite + TypeScript + Tailwind
+Key Files (Updated structure)
+services/api.ts – API client + payload sanitizers
+Personal info, experience, education sanitizers added
+Dates normalized; empty optionals omitted
+hooks/useApi.ts – React Query hooks
+components/Layout.tsx – App layout with sidebar
+pages/CV.tsx – Orchestrator for CV tabs and preview
+components/cv/*
+PersonalInfoForm.tsx – Personal info editor with explicit save
+ExperienceList.tsx – Experience CRUD, reorder, gating, logging
+EducationList.tsx – Education CRUD, dropdown normalization, gating
+SkillsGrid.tsx – Skills grouped view with quick add and CRUD
+CVPreview.tsx – Live preview of CV (unchanged path)
+Swiss design: Black/white, minimal, Helvetica, clean grids
+Database Schema (Core Entities)
+
+Project; ProjectAsset; CVExperience; CVEducation; CVSkill; PersonalInfo; GeneratedPortfolio; PortfolioTemplate
+Changelog (since last guide)
+
+Frontend
+Implemented Phase 6 CV UI end-to-end
+Split massive CV page into modular components under components/cv/*
+Added client-side sanitizers for PersonalInfo, Experience, Education
+Fixed accessibility: id/name + labels; removed focus-losing behaviors
+Added informative debug logging on failed saves
+Router now points /cv to real page
+Backend
+Reworked validation.ts to be robust to date-only strings and empty optionals
+Trim/normalize strings and URLs; numeric coercion for friendlier inputs
+Roadmap – Remaining Work
+
+Phase 7: Portfolio Builder (Day 8–10) – Priority: CRITICAL
+
+Pages
+/pages/Portfolios.tsx – Grid of portfolio cards; filters; quick actions: Duplicate, Download, Delete
+/pages/CreatePortfolio.tsx – Wizard (4 steps)
+/pages/PortfolioDetail.tsx – Show included projects, generation status, regenerate/download
+Wizard
+Step 1: Basic info (name, SAMPLE/FULL, include CV)
+Step 2: Select projects (cards with year/type/asset count; drag to reorder; SAMPLE → limit 3–5)
+Step 3: Select assets per project (thumbs; include/exclude; display order; hero images)
+Step 4: Review & generate (page estimate; “Swiss Minimal” template)
+Client hooks
+Extend portfoliosApi/useApi hooks for add/remove project and includedAssets
+Optional backend enhancement (later): bulk reorder endpoint to avoid multiple PUTs
+Phase 8: PDF Generation (Day 11–15) – Priority: CRITICAL
+
+Dependencies: @react-pdf/renderer, @react-pdf/unicode-properties
+Frontend templates
+/pdf/templates/SwissMinimal.tsx
+/pdf/components/PDFProject.tsx, /pdf/components/PDFCV.tsx
+Backend service
+/backend/src/services/pdfGenerator.ts
+API: POST /api/portfolios/:id/generate -> returns status + download URL
+Considerations
+A4 layout; 150–300 DPI; < 20MB; font embedding; RGB is fine initially
+Phase 9: Polish & Advanced (Day 16–20)
+
+Performance: lazy image load, virtual lists, debounced search, optimistic updates
+Advanced PDF: multiple templates, per-project custom layouts, page numbers, linked ToC, cover customization
+Export/Import: JSON export/import; backup/restore
+Drag & Drop: reorder projects in portfolio; reorder assets; drag-in uploads
+QA: e2e smoke (playwright/cypress), unit tests for sanitizers
+Critical Implementation Details (updated)
+
+Date handling (backend)
+Validation accepts YYYY-MM-DD or ISO; optional dates can be omitted
+Optional field semantics
+Client omits empty optionals; server treats '' as undefined
+Personal info URLs
+Client normalizes (adds protocol); server validates URL
+Accessibility
+Inputs have id/name; labels use htmlFor; buttons have type to prevent implicit submits
+Error visibility
+Education/Experience save now logs request, payload, server details
+Next Session Setup
+
+Backend: cd backend && npm run dev (http://localhost:3001)
+Frontend: cd frontend && npm run dev (http://localhost:5173)
+Verify /cv:
+Personal info saves (no 400)
+Experience/Education required gating works; reordering persists
+Skills quick add/edit/delete works
+Commit (suggested)
+backend/src/schemas/validation.ts
+frontend/src/services/api.ts
+frontend/src/pages/CV.tsx
+frontend/src/components/cv/{PersonalInfoForm.tsx,ExperienceList.tsx,EducationList.tsx,SkillsGrid.tsx}
+Any router/layout tweaks for /cv
+Current Task Priority (updated)
+
+Portfolio Builder (Phase 7) – Core feature
+PDF Generation (Phase 8) – Main deliverable
+Polish & Advanced Features (Phase 9)
+Test Data Available
+
+3 projects with sample data; assets can be uploaded
+CV data sample entries; portfolio template baseline
+Success Criteria (updated)
+
+DONE: Create/edit projects with full metadata
+DONE: Upload and manage project assets
+DONE: Manage CV information (Personal Info, Experience, Education, Skills)
+TODO: Create portfolio configurations (SAMPLE/FULL)
+TODO: Generate print-ready A4 PDF portfolios
+TODO: Switch between Sample/Full portfolios
+TODO: Include CV section in PDF
+TODO: Clean Swiss design throughout
+Handoff Notes
+
+Build incrementally: Implement → Test → Refine → Document
+Keep Swiss minimal aesthetic
+Avoid premature optimization; focus on features that unlock value
+Key Decisions
+
+SQLite (migrate to Postgres later if needed)
+React PDF for layouts
+Sharp for image processing
+Swiss minimal design
+Data separated from presentation
+Current Blockers
+
+None
+Ready for
+
+Phase 7 – Portfolio Builder implementation
+Phase 7 – Implementation Plan (detailed)
+
+Frontend tasks
+Create routes/pages: Portfolios.tsx, CreatePortfolio.tsx, PortfolioDetail.tsx
+Implement wizard (4 steps)
+Reusable components: ProjectCard (selection), AssetPickerGrid (per-project assets), Stepper/Progress
+State: local wizard state; push to API at final step (create); support draft save optional
+React Query hooks: portfolios list/detail; add/remove project; update includedAssets; duplicate; generate
+UX: optimistic updates on quick actions; toasts for success/error
+Backend usage
+Use existing /api/portfolios endpoints
+For SAMPLE: enforce project count limit in client; optionally validate server-side
+Optional: add POST /api/portfolios/reorder-projects for bulk reorder (later)
+Acceptance criteria
+Can create a SAMPLE portfolio selecting 3–5 projects and specific assets
+Can view Portfolio Detail, regenerate, and (later Phase 8) download PDF
+List shows counts and quick actions; duplicate works
+If you want, I can generate the Portfolio Builder scaffolding (pages, hooks, and basic components) in the next reply so you can apply and run immediately.

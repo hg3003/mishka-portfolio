@@ -1,0 +1,83 @@
+:root {
+  --primary: #000000;
+  --secondary: #666666;
+  --accent: #DC2626;
+  --text-color: #000000;
+  --light: #F5F5F5;
+}
+
+/* Optional theme classes (can be toggled on the wrapper if desired) */
+.theme-classic {
+  --primary: #000000;
+  --secondary: #666666;
+  --accent: #DC2626;
+  --text-color: #000000;
+  --light: #F5F5F5;
+}
+.theme-modernBlue {
+  --primary: #000000;
+  --secondary: #666666;
+  --accent: #2563EB;
+  --text-color: #000000;
+  --light: #F5F5F5;
+}
+.theme-warmMinimal {
+  --primary: #000000;
+  --secondary: #666666;
+  --accent: #EA580C;
+  --text-color: #000000;
+  --light: #F5F5F5;
+}
+
+/* Wrapper for any print/preview content using Swiss classes */
+.swiss-print {
+  color: var(--text-color);
+}
+
+/* Cover elements */
+.swiss-cover-title {
+  color: var(--accent);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.swiss-cover-subtitle {
+  color: var(--text-color);
+}
+.swiss-year {
+  color: var(--secondary);
+}
+.swiss-accent-bar {
+  background-color: var(--accent);
+  opacity: 0.8;
+  height: 2px;
+  width: 40mm;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Meta & sections */
+.swiss-meta-label {
+  text-transform: uppercase;
+  font-weight: 600;
+  font-size: 10px;
+  color: var(--accent);
+}
+.swiss-section-title {
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--accent);
+}
+.swiss-accent-border {
+  border-left: 2px solid var(--accent);
+  padding-left: 0.5rem; /* ~8px */
+}
+
+/* Page footer number */
+.swiss-page-number {
+  position: absolute;
+  bottom: 2mm;
+  right: 4mm;
+  font-size: 10px;
+  color: var(--accent);
+}

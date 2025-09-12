@@ -1,0 +1,240 @@
+### Test API Endpoints
+### You can use this file with VS Code REST Client extension or import into Postman
+
+@baseUrl = http://localhost:3001
+@contentType = application/json
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Database Stats
+GET {{baseUrl}}/api/stats
+
+### ==================== PROJECTS ====================
+
+### Get all projects
+GET {{baseUrl}}/api/projects
+
+### Get projects with pagination
+GET {{baseUrl}}/api/projects?page=1&limit=2
+
+### Get projects filtered by type
+GET {{baseUrl}}/api/projects?projectType=RESIDENTIAL
+
+### Search projects
+GET {{baseUrl}}/api/projects?search=Thames
+
+### Get single project (replace with actual ID from GET /api/projects)
+GET {{baseUrl}}/api/projects/REPLACE_WITH_PROJECT_ID
+
+### Create new project
+POST {{baseUrl}}/api/projects
+Content-Type: {{contentType}}
+
+{
+  "projectName": "Test Project",
+  "projectType": "RESIDENTIAL",
+  "location": "London, UK",
+  "yearStart": 2024,
+  "yearCompletion": 2025,
+  "clientName": "Test Client",
+  "practiceName": "Test Practice",
+  "projectValue": 1000000,
+  "projectSize": 500,
+  "role": "Lead Architect",
+  "teamSize": 5,
+  "responsibilities": ["Design", "Management"],
+  "ribaStages": ["STAGE_2_CONCEPT_DESIGN"],
+  "briefDescription": "A test project for API testing",
+  "detailedDescription": "This is a detailed description of the test project",
+  "softwareUsed": ["Revit", "AutoCAD"],
+  "skillsDemonstrated": ["Design", "BIM"],
+  "isAcademic": false,
+  "isCompetition": false,
+  "featuredPriority": 5,
+  "tags": ["test", "api"]
+}
+
+### Update project (replace ID)
+PUT {{baseUrl}}/api/projects/REPLACE_WITH_PROJECT_ID
+Content-Type: {{contentType}}
+
+{
+  "briefDescription": "Updated description"
+}
+
+### Delete project (replace ID)
+DELETE {{baseUrl}}/api/projects/REPLACE_WITH_PROJECT_ID
+
+### ==================== CV DATA ====================
+
+### Get all CV data
+GET {{baseUrl}}/api/cv/all
+
+### Get personal info
+GET {{baseUrl}}/api/cv/personal-info
+
+### Update personal info
+PUT {{baseUrl}}/api/cv/personal-info
+Content-Type: {{contentType}}
+
+{
+  "name": "John Doe",
+  "professionalTitle": "Senior Architect",
+  "email": "john.doe@example.com",
+  "phone": "+44 20 1234 5678",
+  "location": "London, UK"
+}
+
+### ==================== EXPERIENCE ====================
+
+### Get all experiences
+GET {{baseUrl}}/api/cv/experience
+
+### Create experience
+POST {{baseUrl}}/api/cv/experience
+Content-Type: {{contentType}}
+
+{
+  "companyName": "Test Architecture Firm",
+  "positionTitle": "Junior Architect",
+  "location": "London, UK",
+  "startDate": "2023-01-01T00:00:00Z",
+  "endDate": "2024-01-01T00:00:00Z",
+  "isCurrent": false,
+  "description": "Worked on various residential projects",
+  "keyProjects": ["Project A", "Project B"],
+  "keyAchievements": ["Achievement 1", "Achievement 2"],
+  "displayOrder": 3
+}
+
+### ==================== EDUCATION ====================
+
+### Get all education
+GET {{baseUrl}}/api/cv/education
+
+### Create education
+POST {{baseUrl}}/api/cv/education
+Content-Type: {{contentType}}
+
+{
+  "institutionName": "Test University",
+  "degreeType": "BSc Architecture",
+  "fieldOfStudy": "Architecture",
+  "location": "London, UK",
+  "startDate": "2018-09-01T00:00:00Z",
+  "endDate": "2021-06-30T00:00:00Z",
+  "grade": "First Class Honours",
+  "relevantCoursework": ["Design Studio", "History of Architecture"],
+  "displayOrder": 3
+}
+
+### ==================== SKILLS ====================
+
+### Get all skills
+GET {{baseUrl}}/api/cv/skills
+
+### Create skill
+POST {{baseUrl}}/api/cv/skills
+Content-Type: {{contentType}}
+
+{
+  "category": "SOFTWARE",
+  "skillName": "SketchUp",
+  "proficiencyLevel": "INTERMEDIATE",
+  "yearsExperience": 3,
+  "displayOrder": 10
+}
+
+### ==================== ASSETS ====================
+
+### Upload asset for a project (replace PROJECT_ID with actual ID)
+# Note: For actual file upload, use Postman or a tool that supports file uploads
+# POST {{baseUrl}}/api/assets/upload/REPLACE_WITH_PROJECT_ID
+
+### Get asset (replace ASSET_ID)
+GET {{baseUrl}}/api/assets/REPLACE_WITH_ASSET_ID
+
+### Update asset metadata
+PUT {{baseUrl}}/api/assets/REPLACE_WITH_ASSET_ID
+Content-Type: {{contentType}}
+
+{
+  "title": "Updated Asset Title",
+  "caption": "Updated caption for the asset",
+  "assetType": "RENDER",
+  "displayOrder": 1,
+  "isHeroImage": true
+}
+
+### Set asset as hero image
+POST {{baseUrl}}/api/assets/REPLACE_WITH_ASSET_ID/set-hero
+
+### Delete asset
+DELETE {{baseUrl}}/api/assets/REPLACE_WITH_ASSET_ID
+
+### Reorder assets
+POST {{baseUrl}}/api/assets/reorder
+Content-Type: {{contentType}}
+
+{
+  "assets": [
+    { "id": "ASSET_ID_1", "displayOrder": 0 },
+    { "id": "ASSET_ID_2", "displayOrder": 1 }
+  ]
+}
+
+### ==================== PORTFOLIOS ====================
+
+### Get all portfolios
+GET {{baseUrl}}/api/portfolios
+
+### Get portfolio templates
+GET {{baseUrl}}/api/portfolios/templates
+
+### Get single portfolio (replace ID)
+GET {{baseUrl}}/api/portfolios/REPLACE_WITH_PORTFOLIO_ID
+
+### Create new portfolio
+POST {{baseUrl}}/api/portfolios
+Content-Type: {{contentType}}
+
+{
+  "portfolioName": "Test Portfolio",
+  "portfolioType": "SAMPLE",
+  "cvIncluded": true,
+  "projects": [
+    {
+      "projectId": "REPLACE_WITH_PROJECT_ID",
+      "displayOrder": 0,
+      "includedAssets": []
+    }
+  ]
+}
+
+### Update portfolio
+PUT {{baseUrl}}/api/portfolios/REPLACE_WITH_PORTFOLIO_ID
+Content-Type: {{contentType}}
+
+{
+  "portfolioName": "Updated Portfolio Name",
+  "cvIncluded": false
+}
+
+### Add project to portfolio
+POST {{baseUrl}}/api/portfolios/REPLACE_WITH_PORTFOLIO_ID/add-project
+Content-Type: {{contentType}}
+
+{
+  "projectId": "REPLACE_WITH_PROJECT_ID",
+  "displayOrder": 1
+}
+
+### Remove project from portfolio
+DELETE {{baseUrl}}/api/portfolios/PORTFOLIO_ID/remove-project/PROJECT_ID
+
+### Duplicate portfolio
+POST {{baseUrl}}/api/portfolios/REPLACE_WITH_PORTFOLIO_ID/duplicate
+
+### Delete portfolio
+DELETE {{baseUrl}}/api/portfolios/REPLACE_WITH_PORTFOLIO_ID

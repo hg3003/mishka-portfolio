@@ -1,0 +1,750 @@
+// backend/src/pdf/templates/SwissMinimal.tsx
+import React from 'react';
+import { 
+  Document, 
+  Page, 
+  StyleSheet, 
+  Text, 
+  View, 
+  Image,
+  Font
+} from '@react-pdf/renderer';
+import { PDFProjectData } from '../components/PDFProject';
+import { PDFCVData } from '../components/PDFCV';
+
+// Register fonts if you have custom ones, otherwise Helvetica is default
+// Font.register({ family: 'Helvetica Neue', src: '/path/to/HelveticaNeue.ttf' });
+
+// Extended project data interface
+export interface ExtendedProjectData extends PDFProjectData {
+  id: string;
+  projectType?: string | null;
+  location?: string | null;
+  yearStart?: number | null;
+  yearCompletion?: number | null;
+  clientName?: string | null;
+  practiceName?: string | null;
+  projectValue?: number | null;
+  projectSize?: number | null;
+  role?: string | null;
+  teamSize?: number | null;
+  responsibilities?: string[] | null;
+  ribaStages?: string[] | null;
+  briefDescription?: string | null;
+  detailedDescription?: string | null;
+  designApproach?: string | null;
+  keyChallenges?: string | null;
+  solutionsProvided?: string | null;
+  sustainabilityFeatures?: string | null;
+  softwareUsed?: string[] | null;
+  skillsDemonstrated?: string[] | null;
+}
+
+export interface RenderablePortfolio {
+  portfolioName: string;
+  createdAt: string;
+  includeCV: boolean;
+  margins?: { top?: number; bottom?: number; left?: number; right?: number };
+  projects: ExtendedProjectData[];
+  cv?: PDFCVData | null;
+  personalHeader?: string | null;
+  colorScheme?: ColorScheme;
+  layoutStyle?: string; // We'll ignore this and use our single template
+  settings?: {
+    heroHeightMm?: number;
+    stripHeightMm?: number;
+    techHeightMm?: number;
+    thumbHeightMm?: number;
+  } | null;
+}
+
+interface ColorScheme {
+  primary: string;
+  secondary: string;
+  accent: string;
+  text: string;
+  light: string;
+}
+
+// Our Swiss Design color palette
+const swissColors: ColorScheme = {
+  primary: '#000000',
+  secondary: '#666666',
+  accent: '#DC2626', // Red accent
+  text: '#000000',
+  light: '#F5F5F5'
+};
+
+// Create styles with 15mm margins
+const styles = StyleSheet.create({
+  page: {
+    fontFamily: 'Helvetica',
+    backgroundColor: '#FFFFFF',
+  },
+  
+  // Content area (defaults; overridden per page via sizes/margins)
+  content: {
+    paddingTop: 15,
+    paddingBottom: 15,
+    paddingLeft: 15,
+    paddingRight: 15,
+  },
+  
+  // Typography
+  coverTitle: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    letterSpacing: -1,
+    marginBottom: 8,
+  },
+  coverName: {
+    fontSize: 18,
+    fontWeight: 'normal',
+  },
+  coverDate: {
+    fontSize: 9,
+    color: '#666666',
+    marginTop: 4,
+  },
+  coverContact: {
+    fontSize: 8,
+    color: '#666666',
+  },
+  
+  projectTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    letterSpacing: -0.5,
+    marginBottom: 2,
+  },
+  projectSubtitle: {
+    fontSize: 11,
+    color: '#666666',
+    marginBottom: 6,
+  },
+  
+  sectionTitle: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: '#DC2626',
+    marginBottom: 2,
+  },
+  
+  label: {
+    fontSize: 7,
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: '#DC2626',
+    marginBottom: 1,
+  },
+  
+  body: {
+    fontSize: 9,
+    lineHeight: 1.4,
+    color: '#333333',
+    textAlign: 'justify',
+  },
+  
+  metadata: {
+    fontSize: 9,
+    fontWeight: 500,
+  },
+  
+  small: {
+    fontSize: 8,
+    lineHeight: 1.4,
+    color: '#333333',
+  },
+  
+  caption: {
+    fontSize: 7,
+    color: '#666666',
+    marginTop: 2,
+  },
+
+  // Image helpers
+  fillCoverImage: {
+    height: '100%',
+    alignSelf: 'center',
+  },
+  fillContainImage: {
+    maxWidth: '100%',
+    maxHeight: '100%',
+    alignSelf: 'center',
+  },
+  
+  // Layout components
+  heroContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '180mm',
+    overflow: 'hidden',
+  },
+  heroFullWidth: {
+    height: '100%',
+    alignSelf: 'center',
+  },
+
+  
+  heroImage: {
+    width: '100%',
+    height: 120,
+    objectFit: 'cover',
+    marginBottom: 8,
+  },
+  
+  infoStrip: {
+    position: 'absolute',
+    bottom: 15,
+    left: 15,
+    right: 15,
+    backgroundColor: 'white',
+    paddingTop: 10,
+  },
+  
+  metaGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  
+  metaItem: {
+    flex: 1,
+    borderTopWidth: 1,
+    borderTopColor: '#DC2626',
+    borderTopStyle: 'solid',
+    paddingTop: 2,
+  },
+  
+  twoColumnText: {
+    columnCount: 2,
+    columnGap: 8,
+  },
+  
+  imageStrip: {
+    flexDirection: 'row',
+    height: 75,
+    marginBottom: 10,
+  },
+  
+  stripImageLarge: {
+    flex: 2,
+    height: '100%',
+    marginRight: 6,
+    overflow: 'hidden',
+  },
+  
+  stripImageSmall: {
+    flex: 1,
+    height: '100%',
+    overflow: 'hidden',
+  },
+  
+  infoGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    flex: 1,
+  },
+  
+  infoMain: {
+    flex: 1.5,
+  },
+  
+  infoSidebar: {
+    flex: 1,
+  },
+  
+  infoBlock: {
+    borderLeftWidth: 2,
+    borderLeftColor: '#DC2626',
+    borderLeftStyle: 'solid',
+    paddingLeft: 4,
+    marginBottom: 8,
+  },
+  
+  technicalDrawing: {
+    height: 60,
+    backgroundColor: '#F8F8F8',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderStyle: 'solid',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  pageNumber: {
+    position: 'absolute',
+    bottom: 10,
+    right: 15,
+    fontSize: 8,
+    color: '#DC2626',
+    fontWeight: 500,
+  },
+  
+  // Single page layout
+  singleHeroContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 180,
+    overflow: 'hidden',
+  },
+  singleHeroFullWidth: {
+    height: '100%',
+    alignSelf: 'center',
+  },
+  
+  singleContent: {
+    position: 'absolute',
+    top: 180,
+    left: 15,
+    right: 15,
+    bottom: 15,
+    backgroundColor: 'white',
+    paddingTop: 8,
+  },
+  
+  singleGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 5,
+  },
+  
+  singleLeftColumn: {
+    flex: 1.2,
+  },
+  
+  singleRightColumn: {
+    flex: 1,
+  },
+  
+  singleMetaRow: {
+    flexDirection: 'row',
+    marginTop: 5,
+    paddingTop: 3,
+    borderTopWidth: 1,
+    borderTopColor: '#DC2626',
+    borderTopStyle: 'solid',
+  },
+  
+  singleMetaItem: {
+    flex: 1,
+  },
+  
+  imageThumbGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 5,
+  },
+  
+  thumbImage: {
+    width: '48%',
+    height: 40,
+    backgroundColor: '#F5F5F5',
+    overflow: 'hidden',
+  },
+});
+
+// Helper function to determine if project should get 2-page spread
+const shouldUseTwoPageSpread = (project: ExtendedProjectData): boolean => {
+  // Major projects get 2 pages if they have:
+  // - More than 3 images
+  // - Detailed descriptions
+  // - Multiple data points (value, team, stages, etc.)
+  
+  const imageCount = (project.images?.length || 0) + (project.hero ? 1 : 0);
+  const hasDetailedInfo = project.detailedDescription || project.designApproach || project.sustainabilityFeatures;
+  const hasMultipleData = (project.projectValue !== null && project.projectValue !== undefined) || 
+                          (project.responsibilities && project.responsibilities.length > 2) ||
+                          (project.ribaStages && project.ribaStages.length > 0);
+  
+  return imageCount > 3 || (hasDetailedInfo && hasMultipleData);
+};
+
+// Format RIBA stages for display
+const formatRIBAStages = (stages?: string[] | null): string => {
+  if (!stages || stages.length === 0) return '—';
+  
+  const stageNumbers = stages.map(s => {
+    const match = s.match(/STAGE_(\d)/);
+    return match ? match[1] : null;
+  }).filter(Boolean);
+  
+  if (stageNumbers.length === 0) return '—';
+  if (stageNumbers.length === 1) return `Stage ${stageNumbers[0]}`;
+  
+  const min = Math.min(...stageNumbers.map(Number));
+  const max = Math.max(...stageNumbers.map(Number));
+  return `Stages ${min}-${max}`;
+};
+
+// Component: Cover Page
+const CoverPage = ({ portfolioName, createdAt, personalHeader }: {
+  portfolioName: string;
+  createdAt: string;
+  personalHeader?: string | null;
+}) => (
+  <Page size="A4" style={styles.page}>
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={styles.coverTitle}>PORTFOLIO</Text>
+      <Text style={styles.coverName}>{personalHeader || portfolioName}</Text>
+    </View>
+    <View style={{ position: 'absolute', bottom: 30, left: 0, right: 0, alignItems: 'center' }}>
+      <Text style={styles.coverDate}>{new Date(createdAt).getFullYear()}</Text>
+      {personalHeader && (
+        <Text style={styles.coverContact}>
+          {/* Add contact details if available from personalInfo */}
+        </Text>
+      )}
+    </View>
+  </Page>
+);
+
+// Component: Two-Page Spread for Major Projects
+const TwoPageSpread = ({ project, pageNumber, sizes }: { 
+  project: ExtendedProjectData;
+  pageNumber: number;
+  sizes: { heroPt: number; stripPt: number; techPt: number; thumbPt: number; };
+}) => (
+  <>
+    {/* Left Page - Hero and Basic Info */}
+    <Page size="A4" style={styles.page}>
+      {project.hero?.path && (
+        <View style={[styles.heroContainer, { height: sizes.heroPt }]}>
+          <Image style={styles.heroFullWidth} src={project.hero.path} />
+        </View>
+      )}
+      
+      <View style={styles.infoStrip}>
+        <Text style={styles.projectTitle}>{project.name}</Text>
+        <Text style={styles.projectSubtitle}>
+          {[project.projectType, project.location, project.yearCompletion || project.yearStart]
+            .filter(Boolean)
+            .join(' · ')}
+        </Text>
+        
+        <View style={styles.metaGrid}>
+          <View style={styles.metaItem}>
+            <Text style={styles.label}>YEAR</Text>
+            <Text style={styles.metadata}>
+              {project.yearStart && project.yearCompletion 
+                ? `${project.yearStart}-${project.yearCompletion}`
+                : project.yearCompletion || project.yearStart || '—'}
+            </Text>
+          </View>
+          <View style={styles.metaItem}>
+            <Text style={styles.label}>ROLE</Text>
+            <Text style={styles.metadata}>{project.role || '—'}</Text>
+          </View>
+          <View style={styles.metaItem}>
+            <Text style={styles.label}>STAGES</Text>
+            <Text style={styles.metadata}>{formatRIBAStages(project.ribaStages)}</Text>
+          </View>
+        </View>
+        
+        <View style={styles.twoColumnText}>
+          <Text style={styles.body}>
+            {project.briefDescription || project.detailedDescription || ''}
+          </Text>
+        </View>
+      </View>
+      
+      <Text style={styles.pageNumber}>{pageNumber.toString().padStart(2, '0')}</Text>
+    </Page>
+    
+    {/* Right Page - Details and Additional Images */}
+    <Page size="A4" style={styles.page}>
+      <View style={[styles.content, { paddingTop: margins.top, paddingBottom: margins.bottom, paddingLeft: margins.left, paddingRight: margins.right }]}>
+        {/* Image strip at top */}
+        {project.images && project.images.length > 0 && (
+          <View style={[styles.imageStrip, { height: sizes.stripPt }]}>
+            {project.images.slice(0, 2).map((img, i) => (
+              <View key={i} style={i === 0 ? styles.stripImageLarge : styles.stripImageSmall}>
+                <Image style={styles.fillCoverImage} src={img.path} />
+              </View>
+            ))}
+          </View>
+        )}
+        
+        {/* Info grid */}
+        <View style={styles.infoGrid}>
+          <View style={styles.infoMain}>
+            {project.responsibilities && project.responsibilities.length > 0 && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>RESPONSIBILITIES</Text>
+                <Text style={styles.small}>
+                  {project.responsibilities.join('. ')}
+                </Text>
+              </View>
+            )}
+            
+            {project.designApproach && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>DESIGN APPROACH</Text>
+                <Text style={styles.small}>{project.designApproach}</Text>
+              </View>
+            )}
+          </View>
+          
+          <View style={styles.infoSidebar}>
+            {project.projectValue && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>PROJECT DATA</Text>
+                <Text style={styles.small}>
+                  {`£${(project.projectValue / 1000000).toFixed(1)}M`}
+                  {project.projectSize && `\n${project.projectSize.toLocaleString()}m²`}
+                  {project.teamSize && `\nTeam of ${project.teamSize}`}
+                </Text>
+              </View>
+            )}
+            
+            {project.softwareUsed && project.softwareUsed.length > 0 && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>SOFTWARE</Text>
+                <Text style={styles.small}>{project.softwareUsed.join('\n')}</Text>
+              </View>
+            )}
+            
+            {project.sustainabilityFeatures && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>SUSTAINABILITY</Text>
+                <Text style={styles.small}>{project.sustainabilityFeatures}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+        
+        {/* Technical drawing at bottom */}
+        {project.images && project.images.length > 2 && (
+          <View style={[styles.technicalDrawing, { height: sizes.techPt }]}>
+            <Image style={{ maxWidth: '100%', maxHeight: '100%', alignSelf: 'center' }} src={project.images[2].path} />
+          </View>
+        )}
+      </View>
+      
+      <Text style={styles.pageNumber}>{(pageNumber + 1).toString().padStart(2, '0')}</Text>
+    </Page>
+  </>
+);
+
+// Component: Single Page for Minor Projects
+const SinglePage = ({ project, pageNumber, sizes }: { 
+  project: ExtendedProjectData;
+  pageNumber: number;
+  sizes: { heroPt: number; stripPt: number; techPt: number; thumbPt: number; };
+}) => (
+  <Page size="A4" style={styles.page}>
+    {project.hero?.path && (
+      <View style={[styles.singleHeroContainer, { height: sizes.heroPt }]}>
+        <Image style={styles.singleHeroFullWidth} src={project.hero.path} />
+      </View>
+    )}
+    
+    <View style={[styles.singleContent, { top: sizes.heroPt }]}>
+      <Text style={[styles.projectTitle, { fontSize: 18 }]}>{project.name}</Text>
+      <Text style={[styles.projectSubtitle, { fontSize: 10 }]}>
+        {[project.projectType, project.location, project.yearCompletion || project.yearStart]
+          .filter(Boolean)
+          .join(' · ')}
+      </Text>
+      
+      <View style={styles.singleGrid}>
+        <View style={styles.singleLeftColumn}>
+          <Text style={styles.body}>
+            {project.briefDescription || project.detailedDescription || ''}
+          </Text>
+          
+          <View style={styles.singleMetaRow}>
+            <View style={styles.singleMetaItem}>
+              <Text style={styles.label}>YEAR</Text>
+              <Text style={{ fontSize: 8 }}>
+                {project.yearCompletion || project.yearStart || '—'}
+              </Text>
+            </View>
+            <View style={styles.singleMetaItem}>
+              <Text style={styles.label}>ROLE</Text>
+              <Text style={{ fontSize: 8 }}>{project.role || '—'}</Text>
+            </View>
+            <View style={styles.singleMetaItem}>
+              <Text style={styles.label}>STAGE</Text>
+              <Text style={{ fontSize: 8 }}>{formatRIBAStages(project.ribaStages)}</Text>
+            </View>
+            {project.projectValue && (
+              <View style={styles.singleMetaItem}>
+                <Text style={styles.label}>VALUE</Text>
+                <Text style={{ fontSize: 8 }}>
+                  £{(project.projectValue / 1000000).toFixed(1)}M
+                </Text>
+              </View>
+            )}
+          </View>
+          
+          {project.softwareUsed && project.softwareUsed.length > 0 && (
+            <View style={[styles.infoBlock, { marginTop: 5 }]}>
+              <Text style={styles.sectionTitle}>SOFTWARE</Text>
+              <Text style={{ fontSize: 8, lineHeight: 1.4 }}>
+                {project.softwareUsed.join(' · ')}
+              </Text>
+            </View>
+          )}
+        </View>
+        
+        <View style={styles.singleRightColumn}>
+          {project.keyChallenges && (
+            <View style={styles.infoBlock}>
+              <Text style={styles.sectionTitle}>KEY FEATURES</Text>
+              <Text style={{ fontSize: 8, lineHeight: 1.5 }}>
+                {project.keyChallenges}
+              </Text>
+            </View>
+          )}
+          
+          {project.images && project.images.length > 0 && (
+            <View style={styles.imageThumbGrid}>
+              {project.images.slice(0, 4).map((img, i) => (
+                <View key={i} style={[styles.thumbImage, { height: sizes.thumbPt }]}>
+                  <Image src={img.path} style={{ height: '100%', alignSelf: 'center' }} />
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      </View>
+    </View>
+    
+    <Text style={styles.pageNumber}>{pageNumber.toString().padStart(2, '0')}</Text>
+  </Page>
+);
+
+// Main Swiss Minimal Template
+export const SwissMinimal: React.FC<{ data: RenderablePortfolio }> = ({ data }) => {
+  let currentPage = 2; // Start after cover page
+
+  const mmToPt = (mm?: number, fallbackPt: number = 0) => (mm && mm > 0 ? mm * 2.83464567 : fallbackPt);
+  const sizes = {
+    heroPt: mmToPt(data.settings?.heroHeightMm, 200),
+    stripPt: mmToPt(data.settings?.stripHeightMm, 120),
+    techPt: mmToPt(data.settings?.techHeightMm, 120),
+    thumbPt: mmToPt(data.settings?.thumbHeightMm, 40),
+  };
+  const margins = {
+    top: mmToPt(data.margins?.top, 15),
+    bottom: mmToPt(data.margins?.bottom, 15),
+    left: mmToPt(data.margins?.left, 15),
+    right: mmToPt(data.margins?.right, 15),
+  };
+  
+  return (
+    <Document>
+      {/* Cover Page */}
+      <CoverPage 
+        portfolioName={data.portfolioName}
+        createdAt={data.createdAt}
+        personalHeader={data.personalHeader}
+      />
+      
+      {/* Project Pages */}
+      {data.projects.map((project, index) => {
+        const useTwoPages = shouldUseTwoPageSpread(project);
+        const pageComponent = useTwoPages ? (
+          <TwoPageSpread 
+            key={`project-${index}`} 
+            project={project} 
+            pageNumber={currentPage} 
+            sizes={sizes}
+          />
+        ) : (
+          <SinglePage 
+            key={`project-${index}`} 
+            project={project} 
+            pageNumber={currentPage} 
+            sizes={sizes}
+          />
+        );
+        
+        currentPage += useTwoPages ? 2 : 1;
+        return pageComponent;
+      })}
+      
+      {/* CV Page */}
+      {data.includeCV && data.cv && (
+        <Page size="A4" style={styles.page}>
+          <View style={styles.content}>
+            <Text style={[styles.projectTitle, { marginBottom: 12 }]}>Curriculum Vitae</Text>
+            
+            {/* Experience Section */}
+            {data.cv.experiences && data.cv.experiences.length > 0 && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={[styles.sectionTitle, { fontSize: 10, marginBottom: 4 }]}>
+                  EXPERIENCE
+                </Text>
+                {data.cv.experiences.map((exp, i) => (
+                  <View key={i} style={{ marginBottom: 6 }}>
+                    <Text style={{ fontSize: 9, fontWeight: 500 }}>{exp.positionTitle}</Text>
+                    <Text style={{ fontSize: 8, color: '#666666' }}>
+                      {exp.companyName} · {exp.location} · 
+                      {new Date(exp.startDate).getFullYear()}-
+                      {exp.endDate ? new Date(exp.endDate).getFullYear() : 'Present'}
+                    </Text>
+                    {exp.description && (
+                      <Text style={{ fontSize: 8, marginTop: 2 }}>{exp.description}</Text>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+            
+            {/* Education Section */}
+            {data.cv.education && data.cv.education.length > 0 && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={[styles.sectionTitle, { fontSize: 10, marginBottom: 4 }]}>
+                  EDUCATION
+                </Text>
+                {data.cv.education.map((edu, i) => (
+                  <View key={i} style={{ marginBottom: 6 }}>
+                    <Text style={{ fontSize: 9, fontWeight: 500 }}>
+                      {edu.degreeType} {edu.fieldOfStudy}
+                    </Text>
+                    <Text style={{ fontSize: 8, color: '#666666' }}>
+                      {edu.institutionName} · {edu.location} · 
+                      {new Date(edu.startDate).getFullYear()}-
+                      {edu.endDate ? new Date(edu.endDate).getFullYear() : 'Present'}
+                    </Text>
+                    {edu.grade && (
+                      <Text style={{ fontSize: 8, marginTop: 1 }}>{edu.grade}</Text>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+            
+            {/* Skills Section */}
+            {data.cv.skills && data.cv.skills.length > 0 && (
+              <View>
+                <Text style={[styles.sectionTitle, { fontSize: 10, marginBottom: 4 }]}>
+                  SKILLS
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {data.cv.skills.map((skill, i) => (
+                    <Text key={i} style={{ fontSize: 8, marginRight: 8, marginBottom: 2 }}>
+                      {skill.skillName} ({skill.proficiencyLevel})
+                    </Text>
+                  ))}
+                </View>
+              </View>
+            )}
+          </View>
+          
+          <Text style={styles.pageNumber}>{currentPage.toString().padStart(2, '0')}</Text>
+        </Page>
+      )}
+    </Document>
+  );
+};

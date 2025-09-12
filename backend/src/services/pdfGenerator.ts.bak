@@ -1,0 +1,383 @@
+// backend/src/services/pdfGenerator.ts
+import React from 'react';
+import path from 'path';
+import fs from 'fs';
+import ReactPDF from '@react-pdf/renderer';
+import { prisma } from '../utils/db';
+import { getUploadPath } from '../utils/paths';
+import { SwissMinimal, type RenderablePortfolio, type ExtendedProjectData } from '../pdf/templates/SwissMinimal';
+
+// Helpers
+function assetFsPath(fileName: string, prefer: 'optimized' | 'originals' = 'optimized') {
+  const root = getUploadPath();
+  const tryPaths = [
+    path.join(root, 'projects', prefer, fileName),
+    path.join(root, 'projects', prefer === 'optimized' ? 'originals' : 'optimized', fileName),
+    path.join(root, 'projects', 'originals', fileName),
+  ];
+  for (const p of tryPaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  // Fall back to the first candidate to let renderer attempt
+  return tryPaths[0];
+}
+
+export async function loadPortfolioForPdf(id: string) {
+  const portfolio = await prisma.generatedPortfolio.findUnique({
+    where: { id },
+    include: {
+      template: true,
+      projects: {
+        include: {
+          project: {
+            include: {
+              assets: { orderBy: { displayOrder: 'asc' } },
+            },
+          },
+        },
+        orderBy: { displayOrder: 'asc' },
+      },
+    },
+  });
+
+  if (!portfolio) return null;
+
+  const [personalInfo, experiences, education, skills] = await Promise.all([
+    portfolio.cvIncluded ? prisma.personalInfo.findFirst() : Promise.resolve(null),
+    portfolio.cvIncluded ? prisma.cVExperience.findMany({ orderBy: { displayOrder: 'asc' } }) : Promise.resolve([]),
+    portfolio.cvIncluded ? prisma.cVEducation.findMany({ orderBy: { displayOrder: 'asc' } }) : Promise.resolve([]),
+    portfolio.cvIncluded ? prisma.cVSkill.findMany({ orderBy: [{ category: 'asc' }, { displayOrder: 'asc' }] }) : Promise.resolve([]),
+  ]);
+
+  return { portfolio, personalInfo, experiences, education, skills };
+}
+
+/*
+  React-PDF generator is deprecated in favor of the Playwright renderer.
+  Keeping this file for historical reference and potential future reuse.
+*/
+
+export async function generatePortfolioPdf(id: string) {
+  throw new Error('React-PDF generator is disabled. Use the Playwright engine.');
+}
+
+// Retain types for compatibility but discourage usage
+
+  const loaded = await loadPortfolioForPdf(id);
+  if (!loaded) {
+    throw new Error('Portfolio not found');
+  }
+  const { portfolio, personalInfo, experiences, education, skills } = loaded;
+
+  if (!portfolio.projects.length) {
+    const err: any = new Error('Portfolio has no projects selected');
+    err.code = 'EMPTY_PORTFOLIO';
+    throw err;
+  }
+
+  // Parse settings from portfolio
+  const settings = portfolio.settings || {};
+  const colorScheme = settings.colorScheme || 'classic';
+
+  // Map to extended project data with ALL fields
+  const projects: ExtendedProjectData[] = portfolio.projects.map(({ project, includedAssets }) => {
+    const allAssets = project.assets;
+    
+    // Find hero image
+    const hero = allAssets.find((a) => a.isHeroImage) || allAssets[0] || null;
+    
+    // Get selected assets from junction
+    const included = Array.isArray(includedAssets) ? (includedAssets as string[]) : null;
+    
+    const selected = included && included.length > 0
+      ? allAssets.filter((a) => included.includes(a.id))
+      : allAssets;
+    
+    // Place hero first if present and included
+    const ordered = hero && selected.some((a) => a.id === hero.id)
+      ? [hero, ...selected.filter((a) => a.id !== hero.id)]
+      : selected;
+
+    // Map RIBA stages to string array if they exist
+    const ribaStages = Array.isArray(project.ribaStages) 
+      ? project.ribaStages.map((stage: any) => String(stage))
+      : [];
+
+    // Map responsibilities to string array
+    const responsibilities = Array.isArray(project.responsibilities)
+      ? project.responsibilities.map((r: any) => String(r))
+      : [];
+
+    // Map software used to string array
+    const softwareUsed = Array.isArray(project.softwareUsed)
+      ? project.softwareUsed.map((s: any) => String(s))
+      : [];
+
+    // Map skills demonstrated to string array
+    const skillsDemonstrated = Array.isArray(project.skillsDemonstrated)
+      ? project.skillsDemonstrated.map((s: any) => String(s))
+      : [];
+
+    return {
+      // Basic PDFProjectData fields
+      name: project.projectName,
+      type: project.projectType,
+      year: project.yearCompletion ?? project.yearStart ?? null,
+      brief: project.briefDescription,
+      hero: hero
+        ? { path: assetFsPath(hero.fileName), caption: hero.caption ?? null }
+        : null,
+      images: ordered
+        .filter((a) => !hero || a.id !== hero.id)
+        .map((a) => ({
+          path: assetFsPath(a.fileName),
+          caption: a.caption ?? null,
+        })),
+      
+      // Extended fields for Swiss Design template
+      id: project.id,
+      projectType: project.projectType,
+      location: project.location,
+      yearStart: project.yearStart,
+      yearCompletion: project.yearCompletion,
+      clientName: project.clientName,
+      practiceName: project.practiceName,
+      projectValue: project.projectValue,
+      projectSize: project.projectSize,
+      role: project.role,
+      teamSize: project.teamSize,
+      responsibilities,
+      ribaStages,
+      briefDescription: project.briefDescription,
+      detailedDescription: project.detailedDescription,
+      designApproach: project.designApproach,
+      keyChallenges: project.keyChallenges,
+      solutionsProvided: project.solutionsProvided,
+      sustainabilityFeatures: project.sustainabilityFeatures,
+      softwareUsed,
+      skillsDemonstrated,
+    };
+  });
+
+  // Define our simplified color schemes
+  const colorSchemes = {
+    classic: {
+      primary: '#000000',
+      secondary: '#666666',
+      accent: '#DC2626', // Red
+      text: '#000000',
+      light: '#F5F5F5'
+    },
+    modernBlue: {
+      primary: '#000000',
+      secondary: '#666666',
+      accent: '#2563EB', // Blue
+      text: '#000000',
+      light: '#F5F5F5'
+    },
+    warmMinimal: {
+      primary: '#000000',
+      secondary: '#666666',
+      accent: '#EA580C', // Orange
+      text: '#000000',
+      light: '#F5F5F5'
+    }
+  };
+
+  // Get the color scheme
+  const colors = colorSchemes[colorScheme as keyof typeof colorSchemes] || colorSchemes.classic;
+
+  const renderable: RenderablePortfolio = {
+    portfolioName: portfolio.portfolioName,
+    createdAt: portfolio.createdAt.toISOString(),
+    includeCV: portfolio.cvIncluded,
+    margins: (settings as any)?.margins && typeof (settings as any).margins === 'object'
+      ? {
+          top: Number((settings as any).margins.top) || 15,
+          bottom: Number((settings as any).margins.bottom) || 15,
+          left: Number((settings as any).margins.left) || 15,
+          right: Number((settings as any).margins.right) || 15,
+        }
+      : { top: 15, bottom: 15, left: 15, right: 15 },
+    projects,
+    colorScheme: colors,
+    cv: portfolio.cvIncluded
+      ? {
+          personalInfo: personalInfo as any,
+          experiences: (experiences || []).map((e) => ({
+            companyName: e.companyName,
+            positionTitle: e.positionTitle,
+            location: e.location,
+            startDate: e.startDate.toISOString(),
+            endDate: e.endDate ? e.endDate.toISOString() : null,
+            description: e.description,
+          })),
+          education: (education || []).map((ed) => ({
+            institutionName: ed.institutionName,
+            degreeType: ed.degreeType,
+            fieldOfStudy: ed.fieldOfStudy,
+            location: ed.location,
+            startDate: ed.startDate.toISOString(),
+            endDate: ed.endDate ? ed.endDate.toISOString() : null,
+            grade: ed.grade ?? null,
+          })),
+          skills: (skills || []).map((s) => ({
+            category: s.category,
+            skillName: s.skillName,
+            proficiencyLevel: s.proficiencyLevel,
+            yearsExperience: s.yearsExperience ?? null,
+          })),
+        }
+      : undefined,
+    personalHeader: personalInfo ? [personalInfo.name, personalInfo.professionalTitle].filter(Boolean).join(' — ') : null,
+    settings: {
+      heroHeightMm: (settings as any).heroHeightMm ?? 200,
+      stripHeightMm: (settings as any).stripHeightMm ?? 120,
+      techHeightMm: (settings as any).techHeightMm ?? 120,
+      thumbHeightMm: (settings as any).thumbHeightMm ?? 40,
+      defaultEngine: (settings as any).defaultEngine ?? 'playwright',
+    },
+  };
+
+  // Persist to disk
+  const outDir = path.join(getUploadPath(), 'portfolios');
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const fileName = `${portfolio.id}.pdf`;
+  const fileFsPath = path.join(outDir, fileName);
+
+  // Render directly to file
+  const element = React.createElement(SwissMinimal, { data: renderable });
+  await ReactPDF.render(element, fileFsPath);
+
+  const stat = fs.statSync(fileFsPath);
+  const publicPath = `/uploads/portfolios/${fileName}`;
+
+  // Update DB
+  await prisma.generatedPortfolio.update({
+    where: { id: portfolio.id },
+    data: {
+      filePath: publicPath,
+      fileSize: stat.size,
+      // totalPages can be calculated if needed
+    },
+  });
+
+  return { filePath: publicPath, fileSize: stat.size };
+}
+
+// Add this alongside existing exports
+export async function buildRenderablePortfolio(id: string): Promise<RenderablePortfolio | null> {
+  const loaded = await loadPortfolioForPdf(id);
+  if (!loaded) return null;
+
+  const { portfolio, personalInfo, experiences, education, skills } = loaded;
+
+  // Allow HTML preview even if portfolio has no projects selected.
+  // PDF generation still enforces at least one project in generatePortfolioPdf.
+
+  const settings = portfolio.settings || {};
+  const colorScheme = settings.colorScheme || 'classic';
+
+  const colorSchemes = {
+    classic: { primary: '#000', secondary: '#666', accent: '#DC2626', text: '#000', light: '#F5F5F5' },
+    modernBlue:{ primary: '#000', secondary: '#666', accent: '#2563EB', text: '#000', light: '#F5F5F5' },
+    warmMinimal:{ primary: '#000', secondary: '#666', accent: '#EA580C', text: '#000', light: '#F5F5F5' },
+  };
+
+  const colors = colorSchemes[colorScheme as keyof typeof colorSchemes] || colorSchemes.classic;
+
+  // REUSE your existing mapping logic 1:1
+  const projects: ExtendedProjectData[] = portfolio.projects.map(({ project, includedAssets }) => {
+    const allAssets = project.assets;
+    const hero = allAssets.find((a) => a.isHeroImage) || allAssets[0] || null;
+
+    const included = Array.isArray(includedAssets) ? (includedAssets as string[]) : null;
+    const selected = included && included.length > 0
+      ? allAssets.filter((a) => included.includes(a.id))
+      : allAssets;
+
+    const ordered = hero && selected.some((a) => a.id === hero.id)
+      ? [hero, ...selected.filter((a) => a.id !== hero.id)]
+      : selected;
+
+    const ribaStages = Array.isArray(project.ribaStages) ? project.ribaStages.map((s: any) => String(s)) : [];
+    const responsibilities = Array.isArray(project.responsibilities) ? project.responsibilities.map((s: any) => String(s)) : [];
+    const softwareUsed = Array.isArray(project.softwareUsed) ? project.softwareUsed.map((s: any) => String(s)) : [];
+    const skillsDemonstrated = Array.isArray(project.skillsDemonstrated) ? project.skillsDemonstrated.map((s: any) => String(s)) : [];
+
+    // IMPORTANT: For web preview, return web URLs, not fs paths
+    const toWebUpload = (fileName?: string | null) =>
+      fileName ? `/uploads/projects/optimized/${fileName}` : null;
+
+    return {
+      name: project.projectName,
+      type: project.projectType,
+      year: project.yearCompletion ?? project.yearStart ?? null,
+      brief: project.briefDescription,
+      hero: hero ? { path: toWebUpload(hero.fileName)!, caption: hero.caption ?? null } : null,
+      images: ordered
+        .filter((a) => !hero || a.id !== hero.id)
+        .map((a) => ({ path: toWebUpload(a.fileName)!, caption: a.caption ?? null })),
+
+      id: project.id,
+      projectType: project.projectType,
+      location: project.location,
+      yearStart: project.yearStart,
+      yearCompletion: project.yearCompletion,
+      clientName: project.clientName,
+      practiceName: project.practiceName,
+      projectValue: project.projectValue,
+      projectSize: project.projectSize,
+      role: project.role,
+      teamSize: project.teamSize,
+      responsibilities,
+      ribaStages,
+      briefDescription: project.briefDescription,
+      detailedDescription: project.detailedDescription,
+      designApproach: project.designApproach,
+      keyChallenges: project.keyChallenges,
+      solutionsProvided: project.solutionsProvided,
+      sustainabilityFeatures: project.sustainabilityFeatures,
+      softwareUsed,
+      skillsDemonstrated,
+    };
+  });
+
+  return {
+    portfolioName: portfolio.portfolioName,
+    createdAt: portfolio.createdAt.toISOString(),
+    includeCV: portfolio.cvIncluded,
+    margins: { top: 15, bottom: 15, left: 15, right: 15 },
+    projects,
+    colorScheme: colors,
+    cv: portfolio.cvIncluded
+      ? {
+          personalInfo: personalInfo as any,
+          experiences: (experiences || []).map((e) => ({
+            companyName: e.companyName,
+            positionTitle: e.positionTitle,
+            location: e.location,
+            startDate: e.startDate.toISOString(),
+            endDate: e.endDate ? e.endDate.toISOString() : null,
+            description: e.description,
+          })),
+          education: (education || []).map((ed) => ({
+            institutionName: ed.institutionName,
+            degreeType: ed.degreeType,
+            fieldOfStudy: ed.fieldOfStudy,
+            location: ed.location,
+            startDate: ed.startDate.toISOString(),
+            endDate: ed.endDate ? ed.endDate.toISOString() : null,
+            grade: ed.grade ?? null,
+          })),
+          skills: (skills || []).map((s) => ({
+            category: s.category,
+            skillName: s.skillName,
+            proficiencyLevel: s.proficiencyLevel,
+            yearsExperience: s.yearsExperience ?? null,
+          })),
+        }
+      : undefined,
+    personalHeader: personalInfo ? [personalInfo.name, personalInfo.professionalTitle].filter(Boolean).join(' — ') : null,
+  };
+}

@@ -1,0 +1,108 @@
+import React from 'react';
+import { View, Text, StyleSheet } from '@react-pdf/renderer';
+
+export interface PDFPersonalInfo {
+  name?: string | null;
+  professionalTitle?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  location?: string | null;
+  linkedinUrl?: string | null;
+  websiteUrl?: string | null;
+  professionalSummary?: string | null;
+}
+
+export interface PDFExperience {
+  companyName: string;
+  positionTitle: string;
+  location: string;
+  startDate: string;
+  endDate?: string | null;
+  description: string;
+}
+
+export interface PDFEducation {
+  institutionName: string;
+  degreeType: string;
+  fieldOfStudy: string;
+  location: string;
+  startDate: string;
+  endDate?: string | null;
+  grade?: string | null;
+}
+
+export interface PDFSkill {
+  category: string;
+  skillName: string;
+  proficiencyLevel: string;
+  yearsExperience?: number | null;
+}
+
+export interface PDFCVData {
+  personalInfo?: PDFPersonalInfo | null;
+  experiences: PDFExperience[];
+  education: PDFEducation[];
+  skills: PDFSkill[];
+}
+
+const styles = StyleSheet.create({
+  page: { padding: 24, gap: 12 },
+  h1: { fontSize: 16, fontWeight: 700 },
+  h2: { fontSize: 12, fontWeight: 700, marginTop: 8 },
+  p: { fontSize: 10, lineHeight: 1.4 },
+  listItem: { fontSize: 10, marginBottom: 4 },
+  meta: { fontSize: 10, color: '#444' },
+});
+
+export const PDFCV: React.FC<{ cv: PDFCVData }> = ({ cv }) => {
+  const pi = cv.personalInfo;
+  return (
+    <View style={styles.page}>
+      {pi ? (
+        <>
+          <Text style={styles.h1}>{pi.name || ''}</Text>
+          <Text style={styles.meta}>
+            {[pi.professionalTitle, pi.location].filter(Boolean).join(' · ')}
+          </Text>
+          <Text style={styles.meta}>
+            {[pi.email, pi.phone, pi.websiteUrl, pi.linkedinUrl].filter(Boolean).join(' · ')}
+          </Text>
+          {pi.professionalSummary ? <Text style={styles.p}>{pi.professionalSummary}</Text> : null}
+        </>
+      ) : null}
+
+      {cv.experiences.length ? (
+        <>
+          <Text style={styles.h2}>Experience</Text>
+          {cv.experiences.map((e, i) => (
+            <Text key={i} style={styles.listItem}>
+              {e.positionTitle} — {e.companyName} ({new Date(e.startDate).getFullYear()}
+              {e.endDate ? `–${new Date(e.endDate).getFullYear()}` : '–Present'}) · {e.location}
+            </Text>
+          ))}
+        </>
+      ) : null}
+
+      {cv.education.length ? (
+        <>
+          <Text style={styles.h2}>Education</Text>
+          {cv.education.map((e, i) => (
+            <Text key={i} style={styles.listItem}>
+              {e.degreeType}, {e.institutionName} ({new Date(e.startDate).getFullYear()}
+              {e.endDate ? `–${new Date(e.endDate).getFullYear()}` : ''})
+            </Text>
+          ))}
+        </>
+      ) : null}
+
+      {cv.skills.length ? (
+        <>
+          <Text style={styles.h2}>Skills</Text>
+          <Text style={styles.p}>
+            {cv.skills.map((s) => s.skillName).join(' · ')}
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+};

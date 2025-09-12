@@ -1,0 +1,2742 @@
+backend/src/services/pdfGenerator.ts
+===
+// backend/src/services/pdfGenerator.ts
+import React from 'react';
+import path from 'path';
+import fs from 'fs';
+import ReactPDF from '@react-pdf/renderer';
+import { prisma } from '../utils/db';
+import { getUploadPath } from '../utils/paths';
+import { SwissMinimal, type RenderablePortfolio, type ExtendedProjectData } from '../pdf/templates/SwissMinimal';
+
+// Helpers
+function assetFsPath(fileName: string, prefer: 'optimized' | 'originals' = 'optimized') {
+  const root = getUploadPath();
+  const tryPaths = [
+    path.join(root, 'projects', prefer, fileName),
+    path.join(root, 'projects', prefer === 'optimized' ? 'originals' : 'optimized', fileName),
+    path.join(root, 'projects', 'originals', fileName),
+  ];
+  for (const p of tryPaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  // Fall back to the first candidate to let renderer attempt
+  return tryPaths[0];
+}
+
+export async function loadPortfolioForPdf(id: string) {
+  const portfolio = await prisma.generatedPortfolio.findUnique({
+    where: { id },
+    include: {
+      template: true,
+      projects: {
+        include: {
+          project: {
+            include: {
+              assets: { orderBy: { displayOrder: 'asc' } },
+            },
+          },
+        },
+        orderBy: { displayOrder: 'asc' },
+      },
+    },
+  });
+
+  if (!portfolio) return null;
+
+  const [personalInfo, experiences, education, skills] = await Promise.all([
+    portfolio.cvIncluded ? prisma.personalInfo.findFirst() : Promise.resolve(null),
+    portfolio.cvIncluded ? prisma.cVExperience.findMany({ orderBy: { displayOrder: 'asc' } }) : Promise.resolve([]),
+    portfolio.cvIncluded ? prisma.cVEducation.findMany({ orderBy: { displayOrder: 'asc' } }) : Promise.resolve([]),
+    portfolio.cvIncluded ? prisma.cVSkill.findMany({ orderBy: [{ category: 'asc' }, { displayOrder: 'asc' }] }) : Promise.resolve([]),
+  ]);
+
+  return { portfolio, personalInfo, experiences, education, skills };
+}
+
+export async function generatePortfolioPdf(id: string) {
+  const loaded = await loadPortfolioForPdf(id);
+  if (!loaded) {
+    throw new Error('Portfolio not found');
+  }
+  const { portfolio, personalInfo, experiences, education, skills } = loaded;
+
+  if (!portfolio.projects.length) {
+    const err: any = new Error('Portfolio has no projects selected');
+    err.code = 'EMPTY_PORTFOLIO';
+    throw err;
+  }
+
+  // Parse settings from portfolio
+  const settings = portfolio.settings || {};
+  const colorScheme = settings.colorScheme || 'classic';
+
+  // Map to extended project data with ALL fields
+  const projects: ExtendedProjectData[] = portfolio.projects.map(({ project, includedAssets }) => {
+    const allAssets = project.assets;
+    
+    // Find hero image
+    const hero = allAssets.find((a) => a.isHeroImage) || allAssets[0] || null;
+    
+    // Get selected assets from junction
+    const included = Array.isArray(includedAssets) ? (includedAssets as string[]) : null;
+    
+    const selected = included && included.length > 0
+      ? allAssets.filter((a) => included.includes(a.id))
+      : allAssets;
+    
+    // Place hero first if present and included
+    const ordered = hero && selected.some((a) => a.id === hero.id)
+      ? [hero, ...selected.filter((a) => a.id !== hero.id)]
+      : selected;
+
+    // Map RIBA stages to string array if they exist
+    const ribaStages = Array.isArray(project.ribaStages) 
+      ? project.ribaStages.map((stage: any) => String(stage))
+      : [];
+
+    // Map responsibilities to string array
+    const responsibilities = Array.isArray(project.responsibilities)
+      ? project.responsibilities.map((r: any) => String(r))
+      : [];
+
+    // Map software used to string array
+    const softwareUsed = Array.isArray(project.softwareUsed)
+      ? project.softwareUsed.map((s: any) => String(s))
+      : [];
+
+    // Map skills demonstrated to string array
+    const skillsDemonstrated = Array.isArray(project.skillsDemonstrated)
+      ? project.skillsDemonstrated.map((s: any) => String(s))
+      : [];
+
+    return {
+      // Basic PDFProjectData fields
+      name: project.projectName,
+      type: project.projectType,
+      year: project.yearCompletion ?? project.yearStart ?? null,
+      brief: project.briefDescription,
+      hero: hero
+        ? { path: assetFsPath(hero.fileName), caption: hero.caption ?? null }
+        : null,
+      images: ordered
+        .filter((a) => !hero || a.id !== hero.id)
+        .map((a) => ({
+          path: assetFsPath(a.fileName),
+          caption: a.caption ?? null,
+        })),
+      
+      // Extended fields for Swiss Design template
+      id: project.id,
+      projectType: project.projectType,
+      location: project.location,
+      yearStart: project.yearStart,
+      yearCompletion: project.yearCompletion,
+      clientName: project.clientName,
+      practiceName: project.practiceName,
+      projectValue: project.projectValue,
+      projectSize: project.projectSize,
+      role: project.role,
+      teamSize: project.teamSize,
+      responsibilities,
+      ribaStages,
+      briefDescription: project.briefDescription,
+      detailedDescription: project.detailedDescription,
+      designApproach: project.designApproach,
+      keyChallenges: project.keyChallenges,
+      solutionsProvided: project.solutionsProvided,
+      sustainabilityFeatures: project.sustainabilityFeatures,
+      softwareUsed,
+      skillsDemonstrated,
+    };
+  });
+
+  // Define our simplified color schemes
+  const colorSchemes = {
+    classic: {
+      primary: '#000000',
+      secondary: '#666666',
+      accent: '#DC2626', // Red
+      text: '#000000',
+      light: '#F5F5F5'
+    },
+    modernBlue: {
+      primary: '#000000',
+      secondary: '#666666',
+      accent: '#2563EB', // Blue
+      text: '#000000',
+      light: '#F5F5F5'
+    },
+    warmMinimal: {
+      primary: '#000000',
+      secondary: '#666666',
+      accent: '#EA580C', // Orange
+      text: '#000000',
+      light: '#F5F5F5'
+    }
+  };
+
+  // Get the color scheme
+  const colors = colorSchemes[colorScheme as keyof typeof colorSchemes] || colorSchemes.classic;
+
+  const renderable: RenderablePortfolio = {
+    portfolioName: portfolio.portfolioName,
+    createdAt: portfolio.createdAt.toISOString(),
+    includeCV: portfolio.cvIncluded,
+    margins: { top: 15, bottom: 15, left: 15, right: 15 }, // Fixed 15mm margins
+    projects,
+    colorScheme: colors,
+    cv: portfolio.cvIncluded
+      ? {
+          personalInfo: personalInfo as any,
+          experiences: (experiences || []).map((e) => ({
+            companyName: e.companyName,
+            positionTitle: e.positionTitle,
+            location: e.location,
+            startDate: e.startDate.toISOString(),
+            endDate: e.endDate ? e.endDate.toISOString() : null,
+            description: e.description,
+          })),
+          education: (education || []).map((ed) => ({
+            institutionName: ed.institutionName,
+            degreeType: ed.degreeType,
+            fieldOfStudy: ed.fieldOfStudy,
+            location: ed.location,
+            startDate: ed.startDate.toISOString(),
+            endDate: ed.endDate ? ed.endDate.toISOString() : null,
+            grade: ed.grade ?? null,
+          })),
+          skills: (skills || []).map((s) => ({
+            category: s.category,
+            skillName: s.skillName,
+            proficiencyLevel: s.proficiencyLevel,
+            yearsExperience: s.yearsExperience ?? null,
+          })),
+        }
+      : undefined,
+    personalHeader: personalInfo ? [personalInfo.name, personalInfo.professionalTitle].filter(Boolean).join(' — ') : null,
+  };
+
+  // Persist to disk
+  const outDir = path.join(getUploadPath(), 'portfolios');
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const fileName = `${portfolio.id}.pdf`;
+  const fileFsPath = path.join(outDir, fileName);
+
+  // Render directly to file
+  const element = React.createElement(SwissMinimal, { data: renderable });
+  await ReactPDF.render(element, fileFsPath);
+
+  const stat = fs.statSync(fileFsPath);
+  const publicPath = `/uploads/portfolios/${fileName}`;
+
+  // Update DB
+  await prisma.generatedPortfolio.update({
+    where: { id: portfolio.id },
+    data: {
+      filePath: publicPath,
+      fileSize: stat.size,
+      // totalPages can be calculated if needed
+    },
+  });
+
+  return { filePath: publicPath, fileSize: stat.size };
+}
+
+// Add this alongside existing exports
+export async function buildRenderablePortfolio(id: string): Promise<RenderablePortfolio | null> {
+  const loaded = await loadPortfolioForPdf(id);
+  if (!loaded) return null;
+
+  const { portfolio, personalInfo, experiences, education, skills } = loaded;
+
+  // Allow HTML preview even if portfolio has no projects selected.
+  // PDF generation still enforces at least one project in generatePortfolioPdf.
+
+  const settings = portfolio.settings || {};
+  const colorScheme = settings.colorScheme || 'classic';
+
+  const colorSchemes = {
+    classic: { primary: '#000', secondary: '#666', accent: '#DC2626', text: '#000', light: '#F5F5F5' },
+    modernBlue:{ primary: '#000', secondary: '#666', accent: '#2563EB', text: '#000', light: '#F5F5F5' },
+    warmMinimal:{ primary: '#000', secondary: '#666', accent: '#EA580C', text: '#000', light: '#F5F5F5' },
+  };
+
+  const colors = colorSchemes[colorScheme as keyof typeof colorSchemes] || colorSchemes.classic;
+
+  // REUSE your existing mapping logic 1:1
+  const projects: ExtendedProjectData[] = portfolio.projects.map(({ project, includedAssets }) => {
+    const allAssets = project.assets;
+    const hero = allAssets.find((a) => a.isHeroImage) || allAssets[0] || null;
+
+    const included = Array.isArray(includedAssets) ? (includedAssets as string[]) : null;
+    const selected = included && included.length > 0
+      ? allAssets.filter((a) => included.includes(a.id))
+      : allAssets;
+
+    const ordered = hero && selected.some((a) => a.id === hero.id)
+      ? [hero, ...selected.filter((a) => a.id !== hero.id)]
+      : selected;
+
+    const ribaStages = Array.isArray(project.ribaStages) ? project.ribaStages.map((s: any) => String(s)) : [];
+    const responsibilities = Array.isArray(project.responsibilities) ? project.responsibilities.map((s: any) => String(s)) : [];
+    const softwareUsed = Array.isArray(project.softwareUsed) ? project.softwareUsed.map((s: any) => String(s)) : [];
+    const skillsDemonstrated = Array.isArray(project.skillsDemonstrated) ? project.skillsDemonstrated.map((s: any) => String(s)) : [];
+
+    // IMPORTANT: For web preview, return web URLs, not fs paths
+    const toWebUpload = (fileName?: string | null) =>
+      fileName ? `/uploads/projects/optimized/${fileName}` : null;
+
+    return {
+      name: project.projectName,
+      type: project.projectType,
+      year: project.yearCompletion ?? project.yearStart ?? null,
+      brief: project.briefDescription,
+      hero: hero ? { path: toWebUpload(hero.fileName)!, caption: hero.caption ?? null } : null,
+      images: ordered
+        .filter((a) => !hero || a.id !== hero.id)
+        .map((a) => ({ path: toWebUpload(a.fileName)!, caption: a.caption ?? null })),
+
+      id: project.id,
+      projectType: project.projectType,
+      location: project.location,
+      yearStart: project.yearStart,
+      yearCompletion: project.yearCompletion,
+      clientName: project.clientName,
+      practiceName: project.practiceName,
+      projectValue: project.projectValue,
+      projectSize: project.projectSize,
+      role: project.role,
+      teamSize: project.teamSize,
+      responsibilities,
+      ribaStages,
+      briefDescription: project.briefDescription,
+      detailedDescription: project.detailedDescription,
+      designApproach: project.designApproach,
+      keyChallenges: project.keyChallenges,
+      solutionsProvided: project.solutionsProvided,
+      sustainabilityFeatures: project.sustainabilityFeatures,
+      softwareUsed,
+      skillsDemonstrated,
+    };
+  });
+
+  return {
+    portfolioName: portfolio.portfolioName,
+    createdAt: portfolio.createdAt.toISOString(),
+    includeCV: portfolio.cvIncluded,
+    margins: { top: 15, bottom: 15, left: 15, right: 15 },
+    projects,
+    colorScheme: colors,
+    cv: portfolio.cvIncluded
+      ? {
+          personalInfo: personalInfo as any,
+          experiences: (experiences || []).map((e) => ({
+            companyName: e.companyName,
+            positionTitle: e.positionTitle,
+            location: e.location,
+            startDate: e.startDate.toISOString(),
+            endDate: e.endDate ? e.endDate.toISOString() : null,
+            description: e.description,
+          })),
+          education: (education || []).map((ed) => ({
+            institutionName: ed.institutionName,
+            degreeType: ed.degreeType,
+            fieldOfStudy: ed.fieldOfStudy,
+            location: ed.location,
+            startDate: ed.startDate.toISOString(),
+            endDate: ed.endDate ? ed.endDate.toISOString() : null,
+            grade: ed.grade ?? null,
+          })),
+          skills: (skills || []).map((s) => ({
+            category: s.category,
+            skillName: s.skillName,
+            proficiencyLevel: s.proficiencyLevel,
+            yearsExperience: s.yearsExperience ?? null,
+          })),
+        }
+      : undefined,
+    personalHeader: personalInfo ? [personalInfo.name, personalInfo.professionalTitle].filter(Boolean).join(' — ') : null,
+  };
+}
+===
+backend/src/pdf/templates/SwissMinimal.tsx
+===
+// backend/src/pdf/templates/SwissMinimal.tsx
+import React from 'react';
+import { 
+  Document, 
+  Page, 
+  StyleSheet, 
+  Text, 
+  View, 
+  Image,
+  Font
+} from '@react-pdf/renderer';
+import { PDFProjectData } from '../components/PDFProject';
+import { PDFCVData } from '../components/PDFCV';
+
+// Register fonts if you have custom ones, otherwise Helvetica is default
+// Font.register({ family: 'Helvetica Neue', src: '/path/to/HelveticaNeue.ttf' });
+
+// Extended project data interface
+export interface ExtendedProjectData extends PDFProjectData {
+  id: string;
+  projectType?: string | null;
+  location?: string | null;
+  yearStart?: number | null;
+  yearCompletion?: number | null;
+  clientName?: string | null;
+  practiceName?: string | null;
+  projectValue?: number | null;
+  projectSize?: number | null;
+  role?: string | null;
+  teamSize?: number | null;
+  responsibilities?: string[] | null;
+  ribaStages?: string[] | null;
+  briefDescription?: string | null;
+  detailedDescription?: string | null;
+  designApproach?: string | null;
+  keyChallenges?: string | null;
+  solutionsProvided?: string | null;
+  sustainabilityFeatures?: string | null;
+  softwareUsed?: string[] | null;
+  skillsDemonstrated?: string[] | null;
+}
+
+export interface RenderablePortfolio {
+  portfolioName: string;
+  createdAt: string;
+  includeCV: boolean;
+  margins?: { top?: number; bottom?: number; left?: number; right?: number };
+  projects: ExtendedProjectData[];
+  cv?: PDFCVData | null;
+  personalHeader?: string | null;
+  colorScheme?: ColorScheme;
+  layoutStyle?: string; // We'll ignore this and use our single template
+}
+
+interface ColorScheme {
+  primary: string;
+  secondary: string;
+  accent: string;
+  text: string;
+  light: string;
+}
+
+// Our Swiss Design color palette
+const swissColors: ColorScheme = {
+  primary: '#000000',
+  secondary: '#666666',
+  accent: '#DC2626', // Red accent
+  text: '#000000',
+  light: '#F5F5F5'
+};
+
+// Create styles with 15mm margins
+const styles = StyleSheet.create({
+  page: {
+    fontFamily: 'Helvetica',
+    backgroundColor: '#FFFFFF',
+  },
+  
+  // Content area with 15mm margins
+  content: {
+    paddingTop: 15,
+    paddingBottom: 15,
+    paddingLeft: 15,
+    paddingRight: 15,
+  },
+  
+  // Typography
+  coverTitle: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    letterSpacing: -1,
+    marginBottom: 8,
+  },
+  coverName: {
+    fontSize: 18,
+    fontWeight: 'normal',
+  },
+  coverDate: {
+    fontSize: 9,
+    color: '#666666',
+    marginTop: 4,
+  },
+  coverContact: {
+    fontSize: 8,
+    color: '#666666',
+  },
+  
+  projectTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    letterSpacing: -0.5,
+    marginBottom: 2,
+  },
+  projectSubtitle: {
+    fontSize: 11,
+    color: '#666666',
+    marginBottom: 6,
+  },
+  
+  sectionTitle: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: '#DC2626',
+    marginBottom: 2,
+  },
+  
+  label: {
+    fontSize: 7,
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: '#DC2626',
+    marginBottom: 1,
+  },
+  
+  body: {
+    fontSize: 9,
+    lineHeight: 1.4,
+    color: '#333333',
+    textAlign: 'justify',
+  },
+  
+  metadata: {
+    fontSize: 9,
+    fontWeight: 500,
+  },
+  
+  small: {
+    fontSize: 8,
+    lineHeight: 1.4,
+    color: '#333333',
+  },
+  
+  caption: {
+    fontSize: 7,
+    color: '#666666',
+    marginTop: 2,
+  },
+
+  // Image helpers
+  fillCoverImage: {
+    height: '100%',
+    alignSelf: 'center',
+  },
+  fillContainImage: {
+    maxWidth: '100%',
+    maxHeight: '100%',
+    alignSelf: 'center',
+  },
+  
+  // Layout components
+  heroContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '180mm',
+    overflow: 'hidden',
+  },
+  heroFullWidth: {
+    height: '100%',
+    alignSelf: 'center',
+  },
+
+  
+  heroImage: {
+    width: '100%',
+    height: 120,
+    objectFit: 'cover',
+    marginBottom: 8,
+  },
+  
+  infoStrip: {
+    position: 'absolute',
+    bottom: 15,
+    left: 15,
+    right: 15,
+    backgroundColor: 'white',
+    paddingTop: 10,
+  },
+  
+  metaGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  
+  metaItem: {
+    flex: 1,
+    borderTopWidth: 1,
+    borderTopColor: '#DC2626',
+    borderTopStyle: 'solid',
+    paddingTop: 2,
+  },
+  
+  twoColumnText: {
+    columnCount: 2,
+    columnGap: 8,
+  },
+  
+  imageStrip: {
+    flexDirection: 'row',
+    height: 75,
+    marginBottom: 10,
+  },
+  
+  stripImageLarge: {
+    flex: 2,
+    height: '100%',
+    marginRight: 6,
+    overflow: 'hidden',
+  },
+  
+  stripImageSmall: {
+    flex: 1,
+    height: '100%',
+    overflow: 'hidden',
+  },
+  
+  infoGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    flex: 1,
+  },
+  
+  infoMain: {
+    flex: 1.5,
+  },
+  
+  infoSidebar: {
+    flex: 1,
+  },
+  
+  infoBlock: {
+    borderLeftWidth: 2,
+    borderLeftColor: '#DC2626',
+    borderLeftStyle: 'solid',
+    paddingLeft: 4,
+    marginBottom: 8,
+  },
+  
+  technicalDrawing: {
+    height: 60,
+    backgroundColor: '#F8F8F8',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderStyle: 'solid',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  pageNumber: {
+    position: 'absolute',
+    bottom: 10,
+    right: 15,
+    fontSize: 8,
+    color: '#DC2626',
+    fontWeight: 500,
+  },
+  
+  // Single page layout
+  singleHeroContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 180,
+    overflow: 'hidden',
+  },
+  singleHeroFullWidth: {
+    height: '100%',
+    alignSelf: 'center',
+  },
+  
+  singleContent: {
+    position: 'absolute',
+    top: 180,
+    left: 15,
+    right: 15,
+    bottom: 15,
+    backgroundColor: 'white',
+    paddingTop: 8,
+  },
+  
+  singleGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 5,
+  },
+  
+  singleLeftColumn: {
+    flex: 1.2,
+  },
+  
+  singleRightColumn: {
+    flex: 1,
+  },
+  
+  singleMetaRow: {
+    flexDirection: 'row',
+    marginTop: 5,
+    paddingTop: 3,
+    borderTopWidth: 1,
+    borderTopColor: '#DC2626',
+    borderTopStyle: 'solid',
+  },
+  
+  singleMetaItem: {
+    flex: 1,
+  },
+  
+  imageThumbGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 5,
+  },
+  
+  thumbImage: {
+    width: '48%',
+    height: 40,
+    backgroundColor: '#F5F5F5',
+    overflow: 'hidden',
+  },
+});
+
+// Helper function to determine if project should get 2-page spread
+const shouldUseTwoPageSpread = (project: ExtendedProjectData): boolean => {
+  // Major projects get 2 pages if they have:
+  // - More than 3 images
+  // - Detailed descriptions
+  // - Multiple data points (value, team, stages, etc.)
+  
+  const imageCount = (project.images?.length || 0) + (project.hero ? 1 : 0);
+  const hasDetailedInfo = project.detailedDescription || project.designApproach || project.sustainabilityFeatures;
+  const hasMultipleData = (project.projectValue !== null && project.projectValue !== undefined) || 
+                          (project.responsibilities && project.responsibilities.length > 2) ||
+                          (project.ribaStages && project.ribaStages.length > 0);
+  
+  return imageCount > 3 || (hasDetailedInfo && hasMultipleData);
+};
+
+// Format RIBA stages for display
+const formatRIBAStages = (stages?: string[] | null): string => {
+  if (!stages || stages.length === 0) return '—';
+  
+  const stageNumbers = stages.map(s => {
+    const match = s.match(/STAGE_(\d)/);
+    return match ? match[1] : null;
+  }).filter(Boolean);
+  
+  if (stageNumbers.length === 0) return '—';
+  if (stageNumbers.length === 1) return `Stage ${stageNumbers[0]}`;
+  
+  const min = Math.min(...stageNumbers.map(Number));
+  const max = Math.max(...stageNumbers.map(Number));
+  return `Stages ${min}-${max}`;
+};
+
+// Component: Cover Page
+const CoverPage = ({ portfolioName, createdAt, personalHeader }: {
+  portfolioName: string;
+  createdAt: string;
+  personalHeader?: string | null;
+}) => (
+  <Page size="A4" style={styles.page}>
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={styles.coverTitle}>PORTFOLIO</Text>
+      <Text style={styles.coverName}>{personalHeader || portfolioName}</Text>
+    </View>
+    <View style={{ position: 'absolute', bottom: 30, left: 0, right: 0, alignItems: 'center' }}>
+      <Text style={styles.coverDate}>{new Date(createdAt).getFullYear()}</Text>
+      {personalHeader && (
+        <Text style={styles.coverContact}>
+          {/* Add contact details if available from personalInfo */}
+        </Text>
+      )}
+    </View>
+  </Page>
+);
+
+// Component: Two-Page Spread for Major Projects
+const TwoPageSpread = ({ project, pageNumber }: { 
+  project: ExtendedProjectData;
+  pageNumber: number;
+}) => (
+  <>
+    {/* Left Page - Hero and Basic Info */}
+    <Page size="A4" style={styles.page}>
+      {project.hero?.path && (
+        <View style={styles.heroContainer}>
+          <Image style={styles.heroFullWidth} src={project.hero.path} />
+        </View>
+      )}
+      
+      <View style={styles.infoStrip}>
+        <Text style={styles.projectTitle}>{project.name}</Text>
+        <Text style={styles.projectSubtitle}>
+          {[project.projectType, project.location, project.yearCompletion || project.yearStart]
+            .filter(Boolean)
+            .join(' · ')}
+        </Text>
+        
+        <View style={styles.metaGrid}>
+          <View style={styles.metaItem}>
+            <Text style={styles.label}>YEAR</Text>
+            <Text style={styles.metadata}>
+              {project.yearStart && project.yearCompletion 
+                ? `${project.yearStart}-${project.yearCompletion}`
+                : project.yearCompletion || project.yearStart || '—'}
+            </Text>
+          </View>
+          <View style={styles.metaItem}>
+            <Text style={styles.label}>ROLE</Text>
+            <Text style={styles.metadata}>{project.role || '—'}</Text>
+          </View>
+          <View style={styles.metaItem}>
+            <Text style={styles.label}>STAGES</Text>
+            <Text style={styles.metadata}>{formatRIBAStages(project.ribaStages)}</Text>
+          </View>
+        </View>
+        
+        <View style={styles.twoColumnText}>
+          <Text style={styles.body}>
+            {project.briefDescription || project.detailedDescription || ''}
+          </Text>
+        </View>
+      </View>
+      
+      <Text style={styles.pageNumber}>{pageNumber.toString().padStart(2, '0')}</Text>
+    </Page>
+    
+    {/* Right Page - Details and Additional Images */}
+    <Page size="A4" style={styles.page}>
+      <View style={styles.content}>
+        {/* Image strip at top */}
+        {project.images && project.images.length > 0 && (
+          <View style={styles.imageStrip}>
+            {project.images.slice(0, 2).map((img, i) => (
+              <View key={i} style={i === 0 ? styles.stripImageLarge : styles.stripImageSmall}>
+                <Image style={styles.fillCoverImage} src={img.path} />
+              </View>
+            ))}
+          </View>
+        )}
+        
+        {/* Info grid */}
+        <View style={styles.infoGrid}>
+          <View style={styles.infoMain}>
+            {project.responsibilities && project.responsibilities.length > 0 && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>RESPONSIBILITIES</Text>
+                <Text style={styles.small}>
+                  {project.responsibilities.join('. ')}
+                </Text>
+              </View>
+            )}
+            
+            {project.designApproach && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>DESIGN APPROACH</Text>
+                <Text style={styles.small}>{project.designApproach}</Text>
+              </View>
+            )}
+          </View>
+          
+          <View style={styles.infoSidebar}>
+            {project.projectValue && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>PROJECT DATA</Text>
+                <Text style={styles.small}>
+                  {`£${(project.projectValue / 1000000).toFixed(1)}M`}
+                  {project.projectSize && `\n${project.projectSize.toLocaleString()}m²`}
+                  {project.teamSize && `\nTeam of ${project.teamSize}`}
+                </Text>
+              </View>
+            )}
+            
+            {project.softwareUsed && project.softwareUsed.length > 0 && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>SOFTWARE</Text>
+                <Text style={styles.small}>{project.softwareUsed.join('\n')}</Text>
+              </View>
+            )}
+            
+            {project.sustainabilityFeatures && (
+              <View style={styles.infoBlock}>
+                <Text style={styles.sectionTitle}>SUSTAINABILITY</Text>
+                <Text style={styles.small}>{project.sustainabilityFeatures}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+        
+        {/* Technical drawing at bottom */}
+        {project.images && project.images.length > 2 && (
+          <View style={styles.technicalDrawing}>
+            <Image style={{ maxWidth: '100%', maxHeight: '100%', alignSelf: 'center' }} src={project.images[2].path} />
+          </View>
+        )}
+      </View>
+      
+      <Text style={styles.pageNumber}>{(pageNumber + 1).toString().padStart(2, '0')}</Text>
+    </Page>
+  </>
+);
+
+// Component: Single Page for Minor Projects
+const SinglePage = ({ project, pageNumber }: { 
+  project: ExtendedProjectData;
+  pageNumber: number;
+}) => (
+  <Page size="A4" style={styles.page}>
+    {project.hero?.path && (
+      <View style={styles.singleHeroContainer}>
+        <Image style={styles.singleHeroFullWidth} src={project.hero.path} />
+      </View>
+    )}
+    
+    <View style={styles.singleContent}>
+      <Text style={[styles.projectTitle, { fontSize: 18 }]}>{project.name}</Text>
+      <Text style={[styles.projectSubtitle, { fontSize: 10 }]}>
+        {[project.projectType, project.location, project.yearCompletion || project.yearStart]
+          .filter(Boolean)
+          .join(' · ')}
+      </Text>
+      
+      <View style={styles.singleGrid}>
+        <View style={styles.singleLeftColumn}>
+          <Text style={styles.body}>
+            {project.briefDescription || project.detailedDescription || ''}
+          </Text>
+          
+          <View style={styles.singleMetaRow}>
+            <View style={styles.singleMetaItem}>
+              <Text style={styles.label}>YEAR</Text>
+              <Text style={{ fontSize: 8 }}>
+                {project.yearCompletion || project.yearStart || '—'}
+              </Text>
+            </View>
+            <View style={styles.singleMetaItem}>
+              <Text style={styles.label}>ROLE</Text>
+              <Text style={{ fontSize: 8 }}>{project.role || '—'}</Text>
+            </View>
+            <View style={styles.singleMetaItem}>
+              <Text style={styles.label}>STAGE</Text>
+              <Text style={{ fontSize: 8 }}>{formatRIBAStages(project.ribaStages)}</Text>
+            </View>
+            {project.projectValue && (
+              <View style={styles.singleMetaItem}>
+                <Text style={styles.label}>VALUE</Text>
+                <Text style={{ fontSize: 8 }}>
+                  £{(project.projectValue / 1000000).toFixed(1)}M
+                </Text>
+              </View>
+            )}
+          </View>
+          
+          {project.softwareUsed && project.softwareUsed.length > 0 && (
+            <View style={[styles.infoBlock, { marginTop: 5 }]}>
+              <Text style={styles.sectionTitle}>SOFTWARE</Text>
+              <Text style={{ fontSize: 8, lineHeight: 1.4 }}>
+                {project.softwareUsed.join(' · ')}
+              </Text>
+            </View>
+          )}
+        </View>
+        
+        <View style={styles.singleRightColumn}>
+          {project.keyChallenges && (
+            <View style={styles.infoBlock}>
+              <Text style={styles.sectionTitle}>KEY FEATURES</Text>
+              <Text style={{ fontSize: 8, lineHeight: 1.5 }}>
+                {project.keyChallenges}
+              </Text>
+            </View>
+          )}
+          
+          {project.images && project.images.length > 0 && (
+            <View style={styles.imageThumbGrid}>
+              {project.images.slice(0, 4).map((img, i) => (
+                <View key={i} style={styles.thumbImage}>
+                  <Image src={img.path} style={{ height: '100%', alignSelf: 'center' }} />
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      </View>
+    </View>
+    
+    <Text style={styles.pageNumber}>{pageNumber.toString().padStart(2, '0')}</Text>
+  </Page>
+);
+
+// Main Swiss Minimal Template
+export const SwissMinimal: React.FC<{ data: RenderablePortfolio }> = ({ data }) => {
+  let currentPage = 2; // Start after cover page
+  
+  return (
+    <Document>
+      {/* Cover Page */}
+      <CoverPage 
+        portfolioName={data.portfolioName}
+        createdAt={data.createdAt}
+        personalHeader={data.personalHeader}
+      />
+      
+      {/* Project Pages */}
+      {data.projects.map((project, index) => {
+        const useTwoPages = shouldUseTwoPageSpread(project);
+        const pageComponent = useTwoPages ? (
+          <TwoPageSpread 
+            key={`project-${index}`} 
+            project={project} 
+            pageNumber={currentPage} 
+          />
+        ) : (
+          <SinglePage 
+            key={`project-${index}`} 
+            project={project} 
+            pageNumber={currentPage} 
+          />
+        );
+        
+        currentPage += useTwoPages ? 2 : 1;
+        return pageComponent;
+      })}
+      
+      {/* CV Page */}
+      {data.includeCV && data.cv && (
+        <Page size="A4" style={styles.page}>
+          <View style={styles.content}>
+            <Text style={[styles.projectTitle, { marginBottom: 12 }]}>Curriculum Vitae</Text>
+            
+            {/* Experience Section */}
+            {data.cv.experiences && data.cv.experiences.length > 0 && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={[styles.sectionTitle, { fontSize: 10, marginBottom: 4 }]}>
+                  EXPERIENCE
+                </Text>
+                {data.cv.experiences.map((exp, i) => (
+                  <View key={i} style={{ marginBottom: 6 }}>
+                    <Text style={{ fontSize: 9, fontWeight: 500 }}>{exp.positionTitle}</Text>
+                    <Text style={{ fontSize: 8, color: '#666666' }}>
+                      {exp.companyName} · {exp.location} · 
+                      {new Date(exp.startDate).getFullYear()}-
+                      {exp.endDate ? new Date(exp.endDate).getFullYear() : 'Present'}
+                    </Text>
+                    {exp.description && (
+                      <Text style={{ fontSize: 8, marginTop: 2 }}>{exp.description}</Text>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+            
+            {/* Education Section */}
+            {data.cv.education && data.cv.education.length > 0 && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={[styles.sectionTitle, { fontSize: 10, marginBottom: 4 }]}>
+                  EDUCATION
+                </Text>
+                {data.cv.education.map((edu, i) => (
+                  <View key={i} style={{ marginBottom: 6 }}>
+                    <Text style={{ fontSize: 9, fontWeight: 500 }}>
+                      {edu.degreeType} {edu.fieldOfStudy}
+                    </Text>
+                    <Text style={{ fontSize: 8, color: '#666666' }}>
+                      {edu.institutionName} · {edu.location} · 
+                      {new Date(edu.startDate).getFullYear()}-
+                      {edu.endDate ? new Date(edu.endDate).getFullYear() : 'Present'}
+                    </Text>
+                    {edu.grade && (
+                      <Text style={{ fontSize: 8, marginTop: 1 }}>{edu.grade}</Text>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
+            
+            {/* Skills Section */}
+            {data.cv.skills && data.cv.skills.length > 0 && (
+              <View>
+                <Text style={[styles.sectionTitle, { fontSize: 10, marginBottom: 4 }]}>
+                  SKILLS
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {data.cv.skills.map((skill, i) => (
+                    <Text key={i} style={{ fontSize: 8, marginRight: 8, marginBottom: 2 }}>
+                      {skill.skillName} ({skill.proficiencyLevel})
+                    </Text>
+                  ))}
+                </View>
+              </View>
+            )}
+          </View>
+          
+          <Text style={styles.pageNumber}>{currentPage.toString().padStart(2, '0')}</Text>
+        </Page>
+      )}
+    </Document>
+  );
+};
+===
+backend/src/pdf/components/PDFProject.tsx
+===
+import React from 'react';
+import { View, Text, Image, StyleSheet } from '@react-pdf/renderer';
+
+export interface PDFImage {
+  path: string;
+  caption?: string | null;
+}
+
+export interface PDFProjectData {
+  name: string;
+  type?: string | null;
+  year?: number | null;
+  brief?: string | null;
+  hero?: PDFImage | null;
+  images: PDFImage[];
+}
+
+const styles = StyleSheet.create({
+  section: { padding: 24, gap: 8 },
+  title: { fontSize: 14, fontWeight: 700 },
+  meta: { fontSize: 10, color: '#444' },
+  body: { fontSize: 10, lineHeight: 1.4 },
+  hero: { width: '100%', height: 320, objectFit: 'cover' },
+  grid: { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  gridImg: { width: '48%', height: 160, objectFit: 'cover' },
+  cap: { fontSize: 8, color: '#666' },
+});
+
+export const PDFProject: React.FC<{ project: PDFProjectData }> = ({ project }) => {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.title}>{project.name}</Text>
+      <Text style={styles.meta}>
+        {(project.year ?? '—')} · {(project.type ?? '—')}
+      </Text>
+      {project.hero?.path ? (
+        <>
+          <Image style={styles.hero} src={project.hero.path} />
+          {project.hero.caption ? <Text style={styles.cap}>{project.hero.caption}</Text> : null}
+        </>
+      ) : null}
+      {project.brief ? <Text style={styles.body}>{project.brief}</Text> : null}
+      {project.images.length > 0 ? (
+        <View style={styles.grid}>
+          {project.images.map((img, i) => (
+            <View key={`${img.path}-${i}`} style={{ width: '48%' }}>
+              <Image style={styles.gridImg} src={img.path} />
+              {img.caption ? <Text style={styles.cap}>{img.caption}</Text> : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+};
+===
+backend/src/pdf/components/PDFCV.tsx
+===
+import React from 'react';
+import { View, Text, StyleSheet } from '@react-pdf/renderer';
+
+export interface PDFPersonalInfo {
+  name?: string | null;
+  professionalTitle?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  location?: string | null;
+  linkedinUrl?: string | null;
+  websiteUrl?: string | null;
+  professionalSummary?: string | null;
+}
+
+export interface PDFExperience {
+  companyName: string;
+  positionTitle: string;
+  location: string;
+  startDate: string;
+  endDate?: string | null;
+  description: string;
+}
+
+export interface PDFEducation {
+  institutionName: string;
+  degreeType: string;
+  fieldOfStudy: string;
+  location: string;
+  startDate: string;
+  endDate?: string | null;
+  grade?: string | null;
+}
+
+export interface PDFSkill {
+  category: string;
+  skillName: string;
+  proficiencyLevel: string;
+  yearsExperience?: number | null;
+}
+
+export interface PDFCVData {
+  personalInfo?: PDFPersonalInfo | null;
+  experiences: PDFExperience[];
+  education: PDFEducation[];
+  skills: PDFSkill[];
+}
+
+const styles = StyleSheet.create({
+  page: { padding: 24, gap: 12 },
+  h1: { fontSize: 16, fontWeight: 700 },
+  h2: { fontSize: 12, fontWeight: 700, marginTop: 8 },
+  p: { fontSize: 10, lineHeight: 1.4 },
+  listItem: { fontSize: 10, marginBottom: 4 },
+  meta: { fontSize: 10, color: '#444' },
+});
+
+export const PDFCV: React.FC<{ cv: PDFCVData }> = ({ cv }) => {
+  const pi = cv.personalInfo;
+  return (
+    <View style={styles.page}>
+      {pi ? (
+        <>
+          <Text style={styles.h1}>{pi.name || ''}</Text>
+          <Text style={styles.meta}>
+            {[pi.professionalTitle, pi.location].filter(Boolean).join(' · ')}
+          </Text>
+          <Text style={styles.meta}>
+            {[pi.email, pi.phone, pi.websiteUrl, pi.linkedinUrl].filter(Boolean).join(' · ')}
+          </Text>
+          {pi.professionalSummary ? <Text style={styles.p}>{pi.professionalSummary}</Text> : null}
+        </>
+      ) : null}
+
+      {cv.experiences.length ? (
+        <>
+          <Text style={styles.h2}>Experience</Text>
+          {cv.experiences.map((e, i) => (
+            <Text key={i} style={styles.listItem}>
+              {e.positionTitle} — {e.companyName} ({new Date(e.startDate).getFullYear()}
+              {e.endDate ? `–${new Date(e.endDate).getFullYear()}` : '–Present'}) · {e.location}
+            </Text>
+          ))}
+        </>
+      ) : null}
+
+      {cv.education.length ? (
+        <>
+          <Text style={styles.h2}>Education</Text>
+          {cv.education.map((e, i) => (
+            <Text key={i} style={styles.listItem}>
+              {e.degreeType}, {e.institutionName} ({new Date(e.startDate).getFullYear()}
+              {e.endDate ? `–${new Date(e.endDate).getFullYear()}` : ''})
+            </Text>
+          ))}
+        </>
+      ) : null}
+
+      {cv.skills.length ? (
+        <>
+          <Text style={styles.h2}>Skills</Text>
+          <Text style={styles.p}>
+            {cv.skills.map((s) => s.skillName).join(' · ')}
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+};
+===
+backend/src/routes/portfolios.ts
+===
+// backend/src/routes/portfolios.ts
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { prisma } from '../utils/db';
+import { createPortfolioSchema } from '../schemas/validation';
+import { z } from 'zod';
+
+export async function portfolioRoutes(fastify: FastifyInstance) {
+  // GET /api/portfolios - List all generated portfolios
+  fastify.get('/portfolios', async (request, reply) => {
+    try {
+      const portfolios = await prisma.generatedPortfolio.findMany({
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: {
+                select: {
+                  projectName: true,
+                  projectType: true,
+                  location: true,
+                },
+              },
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+          _count: {
+            select: { projects: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return {
+        success: true,
+        data: portfolios,
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch portfolios',
+      });
+    }
+  });
+
+  // GET /api/portfolios/:id - Get single portfolio
+  fastify.get('/portfolios/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const portfolio = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: {
+                include: {
+                  assets: {
+                    orderBy: { displayOrder: 'asc' },
+                  },
+                },
+              },
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+        },
+      });
+
+      if (!portfolio) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      return {
+        success: true,
+        data: portfolio,
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch portfolio',
+      });
+    }
+  });
+
+  // GET /api/portfolios/:id/renderable - Build renderable JSON for HTML preview and PDF
+  fastify.get('/portfolios/:id/renderable', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const { buildRenderablePortfolio } = await import('../services/pdfGenerator');
+      const renderable = await buildRenderablePortfolio(request.params.id);
+      if (!renderable) {
+        return reply.code(404).send({ success: false, error: 'Portfolio not found or empty' });
+      }
+      return { success: true, data: renderable };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({ success: false, error: 'Failed to build renderable portfolio' });
+    }
+  });
+
+  // POST /api/portfolios - Create new portfolio configuration
+  fastify.post('/portfolios', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      // Debug logging
+      fastify.log.info({ 
+        headers: request.headers,
+        bodyType: typeof request.body,
+        bodyKeys: request.body ? Object.keys(request.body) : 'undefined',
+        rawBody: request.body 
+      }, 'Portfolio create request received');
+
+      // Check if body exists
+      if (!request.body) {
+        fastify.log.error('Request body is missing');
+        return reply.code(400).send({
+          success: false,
+          error: 'Request body is missing. Please ensure Content-Type is application/json',
+        });
+      }
+
+      // Validate request body
+      const bodyValidation = createPortfolioSchema.safeParse(request.body);
+      
+      if (!bodyValidation.success) {
+        fastify.log.error({ 
+          errors: bodyValidation.error.errors,
+          receivedData: request.body 
+        }, 'Portfolio validation failed');
+        
+        return reply.code(400).send({
+          success: false,
+          error: 'Invalid portfolio data',
+          details: bodyValidation.error.errors,
+        });
+      }
+
+      const { projects, ...portfolioData } = bodyValidation.data;
+
+      fastify.log.info({ 
+        portfolioData, 
+        projectCount: projects.length 
+      }, 'Creating portfolio');
+
+      // Create portfolio with projects
+      const portfolio = await prisma.generatedPortfolio.create({
+        data: {
+          ...portfolioData,
+          projects: {
+            create: projects.map((p) => ({
+              projectId: p.projectId,
+              displayOrder: p.displayOrder,
+              includedAssets: p.includedAssets,
+            })),
+          },
+        },
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: {
+                select: {
+                  projectName: true,
+                  projectType: true,
+                },
+              },
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+        },
+      });
+
+      fastify.log.info({ portfolioId: portfolio.id }, 'Portfolio created successfully');
+
+      return reply.code(201).send({
+        success: true,
+        data: portfolio,
+      });
+    } catch (error) {
+      fastify.log.error({ 
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      }, 'Failed to create portfolio');
+      
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to create portfolio',
+        ...(process.env.NODE_ENV === 'development' && { 
+          details: error instanceof Error ? error.message : 'Unknown error' 
+        }),
+      });
+    }
+  });
+
+  // PUT /api/portfolios/:id - Update portfolio
+  fastify.put('/portfolios/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const updateSchema = z.object({
+        portfolioName: z.string().min(1).max(200).optional(),
+        portfolioType: z.enum(['SAMPLE', 'FULL']).optional(),
+        templateId: z.string().cuid().optional(),
+        cvIncluded: z.boolean().optional(),
+        settings: z.record(z.any()).optional(),
+      });
+
+      // Check if body exists
+      if (!request.body) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Request body is missing',
+        });
+      }
+
+      const bodyValidation = updateSchema.safeParse(request.body);
+      
+      if (!bodyValidation.success) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Invalid update data',
+          details: bodyValidation.error.errors,
+        });
+      }
+
+      // Check if portfolio exists
+      const existing = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      // Update portfolio
+      const portfolio = await prisma.generatedPortfolio.update({
+        where: { id: request.params.id },
+        data: bodyValidation.data,
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: true,
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+        },
+      });
+
+      return {
+        success: true,
+        data: portfolio,
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to update portfolio',
+      });
+    }
+  });
+
+  // DELETE /api/portfolios/:id - Delete portfolio
+  fastify.delete('/portfolios/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      // Check if portfolio exists
+      const existing = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      // Delete portfolio (junction table entries will cascade)
+      await prisma.generatedPortfolio.delete({
+        where: { id: request.params.id },
+      });
+
+      return {
+        success: true,
+        message: 'Portfolio deleted successfully',
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to delete portfolio',
+      });
+    }
+  });
+
+  // POST /api/portfolios/:id/add-project - Add project to existing portfolio
+  fastify.post('/portfolios/:id/add-project', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const bodySchema = z.object({
+        projectId: z.string().cuid(),
+        displayOrder: z.number().min(0).optional(),
+        includedAssets: z.array(z.string().cuid()).optional(),
+      });
+
+      // Check if body exists
+      if (!request.body) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Request body is missing',
+        });
+      }
+
+      const bodyValidation = bodySchema.safeParse(request.body);
+      
+      if (!bodyValidation.success) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Invalid project data',
+          details: bodyValidation.error.errors,
+        });
+      }
+
+      // Check if portfolio exists
+      const portfolio = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+        include: {
+          projects: true,
+        },
+      });
+
+      if (!portfolio) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      // Check if project exists
+      const project = await prisma.project.findUnique({
+        where: { id: bodyValidation.data.projectId },
+      });
+
+      if (!project) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Project not found',
+        });
+      }
+
+      // Check if project already in portfolio
+      const existing = portfolio.projects.find(
+        (p) => p.projectId === bodyValidation.data.projectId
+      );
+
+      if (existing) {
+        return reply.code(409).send({
+          success: false,
+          error: 'Project already in portfolio',
+        });
+      }
+
+      // Get max display order if not provided
+      const displayOrder = bodyValidation.data.displayOrder ?? 
+        Math.max(...portfolio.projects.map(p => p.displayOrder), -1) + 1;
+
+      // Add project to portfolio
+      const portfolioProject = await prisma.portfolioProject.create({
+        data: {
+          portfolioId: request.params.id,
+          projectId: bodyValidation.data.projectId,
+          displayOrder,
+          includedAssets: bodyValidation.data.includedAssets || [],
+        },
+        include: {
+          project: true,
+        },
+      });
+
+      return reply.code(201).send({
+        success: true,
+        data: portfolioProject,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to add project to portfolio',
+      });
+    }
+  });
+
+  // DELETE /api/portfolios/:id/remove-project/:projectId - Remove project from portfolio
+  fastify.delete('/portfolios/:portfolioId/remove-project/:projectId', 
+    async (request: FastifyRequest<{ Params: { portfolioId: string; projectId: string } }>, reply: FastifyReply) => {
+    try {
+      // Find the portfolio project entry
+      const portfolioProject = await prisma.portfolioProject.findFirst({
+        where: {
+          portfolioId: request.params.portfolioId,
+          projectId: request.params.projectId,
+        },
+      });
+
+      if (!portfolioProject) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Project not found in portfolio',
+        });
+      }
+
+      // Delete the junction entry
+      await prisma.portfolioProject.delete({
+        where: { id: portfolioProject.id },
+      });
+
+      return {
+        success: true,
+        message: 'Project removed from portfolio',
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to remove project from portfolio',
+      });
+    }
+  });
+
+  // GET /api/portfolios/templates - Get available templates
+  fastify.get('/portfolios/templates', async (request, reply) => {
+    try {
+      const templates = await prisma.portfolioTemplate.findMany({
+        orderBy: { isDefault: 'desc' },
+      });
+
+      return {
+        success: true,
+        data: templates,
+      };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch templates',
+      });
+    }
+  });
+
+  // POST /api/portfolios/:id/generate - Generate or regenerate PDF
+  fastify.post('/portfolios/:id/generate', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const existing = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+        include: { projects: true },
+      });
+
+      if (!existing) {
+        return reply.code(404).send({ success: false, error: 'Portfolio not found' });
+      }
+      if (!existing.projects.length) {
+        return reply.code(400).send({ success: false, error: 'Cannot generate PDF: no projects selected' });
+      }
+
+      fastify.log.info({ 
+        portfolioId: request.params.id,
+        settings: existing.settings 
+      }, 'Generating PDF for portfolio');
+
+      const { generatePortfolioPdf } = await import('../services/pdfGenerator');
+      const result = await generatePortfolioPdf(request.params.id);
+
+      fastify.log.info({ 
+        portfolioId: request.params.id,
+        filePath: result.filePath,
+        fileSize: result.fileSize 
+      }, 'PDF generated successfully');
+
+      return reply.code(201).send({
+        success: true,
+        data: result,
+      });
+    } catch (error: any) {
+      if (error?.code === 'EMPTY_PORTFOLIO') {
+        return reply.code(400).send({ success: false, error: error.message });
+      }
+      fastify.log.error({ 
+        error,
+        portfolioId: request.params.id,
+        message: error?.message 
+      }, 'Failed to generate PDF');
+      
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to generate PDF',
+        ...(process.env.NODE_ENV !== 'production' && { details: String(error?.message || error) }),
+      });
+    }
+  });
+
+  // POST /api/portfolios/:id/duplicate - Duplicate a portfolio
+  fastify.post('/portfolios/:id/duplicate', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      // Get original portfolio
+      const original = await prisma.generatedPortfolio.findUnique({
+        where: { id: request.params.id },
+        include: {
+          projects: true,
+        },
+      });
+
+      if (!original) {
+        return reply.code(404).send({
+          success: false,
+          error: 'Portfolio not found',
+        });
+      }
+
+      // Create duplicate
+      const duplicate = await prisma.generatedPortfolio.create({
+        data: {
+          portfolioName: `${original.portfolioName} (Copy)`,
+          portfolioType: original.portfolioType,
+          templateId: original.templateId,
+          cvIncluded: original.cvIncluded,
+          settings: original.settings,
+          projects: {
+            create: original.projects.map((p) => ({
+              projectId: p.projectId,
+              displayOrder: p.displayOrder,
+              includedAssets: p.includedAssets,
+              customLayout: p.customLayout,
+            })),
+          },
+        },
+        include: {
+          template: true,
+          projects: {
+            include: {
+              project: true,
+            },
+            orderBy: { displayOrder: 'asc' },
+          },
+        },
+      });
+
+      return reply.code(201).send({
+        success: true,
+        data: duplicate,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to duplicate portfolio',
+      });
+    }
+  });
+}
+===
+backend/src/utils/paths.ts
+===
+import path from 'path';
+import fs from 'fs';
+
+const isElectron = process.env.ELECTRON_RUN === 'true' || !!(process as any).versions?.electron;
+
+export function getUploadPath() {
+  if (isElectron && process.env.USER_DATA_PATH) {
+    const uploadsPath = path.join(process.env.USER_DATA_PATH, 'uploads');
+    if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
+    return uploadsPath;
+  }
+  const uploadsPath = path.join(__dirname, '..', '..', 'uploads');
+  if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
+  return uploadsPath;
+}
+===
+backend/src/index.ts
+===
+// backend/src/index.ts
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
+import path from 'path';
+import dotenv from 'dotenv';
+import fs from 'fs';
+import { checkDatabaseConnection, getDatabaseStats, prisma } from './utils/db';
+import { projectRoutes } from './routes/projects';
+import { cvRoutes } from './routes/cv';
+import { assetRoutes } from './routes/assets';
+import { portfolioRoutes } from './routes/portfolios';
+import { getUploadPath } from './utils/paths';
+
+// Load environment variables
+dotenv.config();
+
+// Create Fastify instance with proper body parsing
+const fastify = Fastify({
+  logger: {
+    transport: {
+      target: 'pino-pretty',
+      options: {
+        translateTime: 'HH:MM:ss Z',
+        ignore: 'pid,hostname',
+      },
+    },
+  },
+  // Add body limit for JSON parsing
+  bodyLimit: 30 * 1024 * 1024, // 30MB
+});
+
+// Determine if running in Electron
+const isElectron = process.env.ELECTRON_RUN === 'true' || process.versions?.electron;
+
+// Get appropriate paths for Electron vs normal Node
+const getElectronUploadPath = () => {
+  if (isElectron && process.env.USER_DATA_PATH) {
+    // In Electron, use app.getPath('userData')
+    const uploadsPath = path.join(process.env.USER_DATA_PATH, 'uploads');
+    // Ensure directory exists
+    if (!fs.existsSync(uploadsPath)) {
+      fs.mkdirSync(uploadsPath, { recursive: true });
+    }
+    return uploadsPath;
+  }
+  // Use the imported getUploadPath for normal operation
+  return getUploadPath();
+};
+
+// Graceful shutdown handler for Electron
+const setupGracefulShutdown = () => {
+  const shutdown = async (signal: string) => {
+    console.log(`\n${signal} received, shutting down gracefully...`);
+    try {
+      await prisma.$disconnect();
+      await fastify.close();
+      process.exit(0);
+    } catch (err) {
+      console.error('Error during shutdown:', err);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  
+  // Windows specific
+  if (process.platform === 'win32') {
+    process.on('message', (msg) => {
+      if (msg === 'shutdown') {
+        shutdown('SHUTDOWN');
+      }
+    });
+  }
+};
+
+// Error handler
+fastify.setErrorHandler(async (error, request, reply) => {
+  // Log error
+  request.log.error(error);
+
+  // Handle Prisma errors
+  if (error.code === 'P2002') {
+    return reply.code(409).send({
+      success: false,
+      error: 'A record with this value already exists',
+    });
+  }
+
+  if (error.code === 'P2025') {
+    return reply.code(404).send({
+      success: false,
+      error: 'Record not found',
+    });
+  }
+
+  // Handle Fastify errors
+  if (error.statusCode) {
+    return reply.code(error.statusCode).send({
+      success: false,
+      error: error.message,
+    });
+  }
+
+  // Default error
+  return reply.code(500).send({
+    success: false,
+    error: 'Internal server error',
+    ...(process.env.NODE_ENV === 'development' && { details: error.message }),
+  });
+});
+
+// Add JSON parser - IMPORTANT: This must be added before routes
+fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function (req, body, done) {
+  try {
+    const json = JSON.parse(body as string);
+    done(null, json);
+  } catch (err: any) {
+    err.statusCode = 400;
+    done(err, undefined);
+  }
+});
+
+// Health check route
+fastify.get('/health', async (request, reply) => {
+  const dbConnected = await checkDatabaseConnection();
+  return { 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    database: dbConnected ? 'connected' : 'disconnected',
+    environment: isElectron ? 'electron' : 'node',
+    uploadPath: getElectronUploadPath()
+  };
+});
+
+// Database stats route
+fastify.get('/api/stats', async (request, reply) => {
+  try {
+    const stats = await getDatabaseStats();
+    return { success: true, stats };
+  } catch (error) {
+    reply.code(500).send({ success: false, error: 'Failed to get database stats' });
+  }
+});
+
+// Start server
+const start = async () => {
+  try {
+    // Database setup for Electron
+    if (isElectron && process.env.NODE_ENV === 'production') {
+      try {
+        // Optimize SQLite for Electron/Desktop use
+        await prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL');
+        await prisma.$executeRawUnsafe('PRAGMA synchronous = NORMAL');
+        
+        // Check if database needs initialization
+        const tableCount = await prisma.$queryRaw`SELECT COUNT(*) as count FROM sqlite_master WHERE type='table'`;
+        console.log('Database tables found:', tableCount);
+      } catch (error) {
+        console.error('Database setup error:', error);
+      }
+    }
+
+    // CORS configuration
+    await fastify.register(cors, {
+      origin: (origin, cb) => {
+        // Allow requests from Electron app (file:// protocol) and development
+        const allowedOrigins = [
+          process.env.FRONTEND_URL || 'http://localhost:5173',
+          'http://localhost:3001',
+          'http://localhost:3000',
+          'file://'
+        ];
+        
+        // In Electron, be more permissive
+        if (isElectron) {
+          cb(null, true);
+        } else if (!origin || allowedOrigins.some(allowed => origin?.startsWith(allowed))) {
+          cb(null, true);
+        } else {
+          cb(new Error('Not allowed by CORS'), false);
+        }
+      },
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization'],
+    });
+
+    // Register multipart for file uploads
+    await fastify.register(multipart, {
+      limits: {
+        fileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760'), // 10MB default
+        files: 10, // Max number of files
+      },
+    });
+
+    // Register static file serving for uploads
+    const uploadPath = getElectronUploadPath();
+    await fastify.register(fastifyStatic, {
+      root: uploadPath,
+      prefix: '/uploads/',
+      decorateReply: false // Required when registering multiple static plugins
+    });
+    
+    // Serve frontend in production (Electron)
+    if (process.env.NODE_ENV === 'production' && isElectron) {
+      // Serve the built frontend from Electron
+      const frontendPath = path.join(__dirname, '../../frontend/dist');
+      if (fs.existsSync(frontendPath)) {
+        await fastify.register(fastifyStatic, {
+          root: frontendPath,
+          prefix: '/',
+          decorateReply: false
+        });
+        
+        // Catch-all route for SPA routing
+        fastify.setNotFoundHandler((request, reply) => {
+          if (!request.url.startsWith('/api') && !request.url.startsWith('/uploads')) {
+            reply.sendFile('index.html', frontendPath);
+          } else {
+            reply.code(404).send({ success: false, error: 'Not found' });
+          }
+        });
+      }
+    }
+    
+    // Register routes with prefix
+    await fastify.register(projectRoutes, { prefix: '/api' });
+    await fastify.register(cvRoutes, { prefix: '/api' });
+    await fastify.register(assetRoutes, { prefix: '/api' });
+    await fastify.register(portfolioRoutes, { prefix: '/api' });
+    
+    const port = parseInt(process.env.PORT || '3001');
+    // In Electron, bind to 127.0.0.1 instead of localhost for better Windows compatibility
+    const host = process.env.HOST || (isElectron ? '127.0.0.1' : 'localhost');
+    
+    await fastify.listen({ port, host });
+    
+    console.log(`🚀 Server running at http://${host}:${port}`);
+    console.log(`📁 Serving uploads from: ${uploadPath}`);
+    console.log(`🏠 Environment: ${isElectron ? 'Electron' : 'Node.js'}`);
+    console.log(`🏥 Health check at http://${host}:${port}/health`);
+    console.log(`📊 API Stats at http://${host}:${port}/api/stats`);
+    console.log(`\n📚 API Endpoints:`);
+    console.log(`   Projects: http://${host}:${port}/api/projects`);
+    console.log(`   Assets: http://${host}:${port}/api/assets`);
+    console.log(`   CV Data: http://${host}:${port}/api/cv/all`);
+    console.log(`   Portfolios: http://${host}:${port}/api/portfolios`);
+    
+    // Setup graceful shutdown
+    setupGracefulShutdown();
+    
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+};
+
+start();
+===
+backend/src/utils/db.ts
+===
+import { PrismaClient } from '@prisma/client';
+
+// Create a single instance of PrismaClient
+const globalForPrisma = global as unknown as { prisma: PrismaClient };
+
+export const prisma =
+  globalForPrisma.prisma ||
+  new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  });
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+
+// Utility function to check database connection
+export async function checkDatabaseConnection(): Promise<boolean> {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
+  } catch (error) {
+    console.error('Database connection failed:', error);
+    return false;
+  }
+}
+
+// Utility function to get database stats
+export async function getDatabaseStats() {
+  const [
+    projectCount,
+    assetCount,
+    experienceCount,
+    educationCount,
+    skillCount,
+    portfolioCount,
+  ] = await Promise.all([
+    prisma.project.count(),
+    prisma.projectAsset.count(),
+    prisma.cVExperience.count(),
+    prisma.cVEducation.count(),
+    prisma.cVSkill.count(),
+    prisma.generatedPortfolio.count(),
+  ]);
+
+  return {
+    projects: projectCount,
+    assets: assetCount,
+    experiences: experienceCount,
+    education: educationCount,
+    skills: skillCount,
+    portfolios: portfolioCount,
+    total:
+      projectCount +
+      assetCount +
+      experienceCount +
+      educationCount +
+      skillCount +
+      portfolioCount,
+  };
+}
+===
+backend/prisma/schema.prisma
+===
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== PROJECTS ====================
+
+model Project {
+  id            String      @id @default(cuid())
+  projectName   String
+  projectType   String      // RESIDENTIAL, COMMERCIAL, etc.
+  location      String
+  yearStart     Int
+  yearCompletion Int?
+  clientName    String?
+  practiceName  String
+  projectValue  Float?
+  projectSize   Float?      // in square meters
+  
+  // Role & Involvement
+  role          String      // Part 1 Assistant, Architect, etc.
+  teamSize      Int?
+  responsibilities Json     // Array of strings
+  
+  // RIBA Stages - stored as JSON array
+  ribaStages    Json        // Array of stage strings
+  
+  // Project Details
+  briefDescription String
+  detailedDescription String?
+  designApproach String?
+  keyChallenges String?
+  solutionsProvided String?
+  sustainabilityFeatures String?
+  
+  // Skills/Software - stored as JSON arrays
+  softwareUsed  Json        // Array of strings
+  skillsDemonstrated Json   // Array of strings
+  
+  // Metadata
+  isAcademic    Boolean     @default(false)
+  isCompetition Boolean     @default(false)
+  awardsReceived Json?      // Array of strings
+  featuredPriority Int      @default(5) // 1-10, lower is higher priority
+  tags          Json         // Array of strings
+  
+  // Relations
+  assets        ProjectAsset[]
+  portfolios    PortfolioProject[]
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([projectType])
+  @@index([yearStart])
+  @@index([featuredPriority])
+}
+
+model ProjectAsset {
+  id            String      @id @default(cuid())
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  assetType     String      // IMAGE, DRAWING, DIAGRAM, etc.
+  filePath      String
+  fileName      String
+  fileSize      Int         // in bytes
+  mimeType      String
+  width         Int?
+  height        Int?
+  
+  // Asset Details
+  title         String?
+  caption       String?
+  drawingType   String?     // PLAN, SECTION, ELEVATION, etc.
+  scale         String?     // e.g., "1:100"
+  stage         String?     // RIBA stage
+  displayOrder  Int         @default(0)
+  isHeroImage   Boolean     @default(false)
+  
+  // Layout Hints
+  preferredSize String?     // FULL_PAGE, HALF_PAGE, etc.
+  canBeCropped  Boolean     @default(true)
+  focalPointX   Float?      // 0-1, percentage from left
+  focalPointY   Float?      // 0-1, percentage from top
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([projectId])
+  @@index([displayOrder])
+}
+
+// ==================== CV ====================
+
+model CVExperience {
+  id            String      @id @default(cuid())
+  companyName   String
+  positionTitle String
+  location      String
+  startDate     DateTime
+  endDate       DateTime?
+  isCurrent     Boolean     @default(false)
+  description   String      // Can be long text
+  keyProjects   Json?       // Array of strings
+  keyAchievements Json?     // Array of strings
+  displayOrder  Int         @default(0)
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([displayOrder])
+}
+
+model CVEducation {
+  id            String      @id @default(cuid())
+  institutionName String
+  degreeType    String      // BA, MArch, Part 1, etc.
+  fieldOfStudy  String
+  location      String
+  startDate     DateTime
+  endDate       DateTime?
+  grade         String?
+  relevantCoursework Json?  // Array of strings
+  displayOrder  Int         @default(0)
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([displayOrder])
+}
+
+model CVSkill {
+  id            String      @id @default(cuid())
+  category      String      // SOFTWARE, TECHNICAL, DESIGN, etc.
+  skillName     String
+  proficiencyLevel String   // BASIC, INTERMEDIATE, ADVANCED, EXPERT
+  yearsExperience Int?
+  displayOrder  Int         @default(0)
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([category])
+  @@index([displayOrder])
+}
+
+// ==================== PERSONAL INFO ====================
+
+model PersonalInfo {
+  id            String      @id @default(cuid())
+  name          String
+  professionalTitle String  // e.g., "Architectural Assistant Part 2"
+  arbNumber     String?     // ARB registration number
+  email         String
+  phone         String?
+  location      String
+  linkedinUrl   String?
+  websiteUrl    String?
+  professionalSummary String? // Elevator pitch
+  careerObjectives String?
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+// ==================== PORTFOLIO ====================
+
+model PortfolioTemplate {
+  id            String      @id @default(cuid())
+  templateName  String      @unique
+  description   String?
+  layoutStyle   String
+  fontsConfig   Json        // JSON object with font settings
+  colorScheme   Json        // JSON object with colors
+  pageLayouts   Json        // JSON object with page definitions
+  marginsConfig Json        // JSON object with margin settings
+  isDefault     Boolean     @default(false)
+  
+  portfolios    GeneratedPortfolio[]
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model GeneratedPortfolio {
+  id            String      @id @default(cuid())
+  portfolioName String
+  dateCreated   DateTime    @default(now())
+  templateId    String?
+  template      PortfolioTemplate? @relation(fields: [templateId], references: [id])
+  
+  portfolioType String      // SAMPLE or FULL
+  cvIncluded    Boolean     @default(false)
+  filePath      String?     // Path to generated PDF
+  totalPages    Int?
+  fileSize      Int?        // in bytes
+  
+  // Project selections
+  projects      PortfolioProject[]
+  
+  // Additional settings stored as JSON
+  settings      Json?       // Any additional configuration
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([portfolioType])
+}
+
+// Junction table for many-to-many relationship
+model PortfolioProject {
+  id            String      @id @default(cuid())
+  portfolioId   String
+  portfolio     GeneratedPortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  displayOrder  Int         @default(0)
+  includedAssets Json       // Array of asset IDs to include
+  customLayout  Json?       // Optional custom layout for this project in this portfolio
+  
+  @@unique([portfolioId, projectId])
+  @@index([portfolioId])
+  @@index([projectId])
+}
+===
+backend/src/schemas/validation.ts
+===
+// backend/src/schemas/validation.ts
+import { z } from 'zod';
+
+/**
+ * Helpers
+ */
+
+// Trim a required string and enforce min/max
+const reqString = (min: number, max: number) =>
+  z.preprocess(
+    (v) => (typeof v === 'string' ? v.trim() : v),
+    z.string().min(min).max(max)
+  );
+
+// Trim an optional string; treat ''/null/undefined as undefined; enforce max
+const optString = (max: number) =>
+  z.preprocess((v) => {
+    if (v === null || v === undefined) return undefined;
+    if (typeof v !== 'string') return v;
+    const t = v.trim();
+    return t === '' ? undefined : t;
+  }, z.string().max(max).optional());
+
+// Optional URL string; treat ''/null/undefined as undefined; add https:// if missing
+const optUrlString = z.preprocess((v) => {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v !== 'string') return v;
+  const t = v.trim();
+  if (t === '') return undefined;
+  const withProto = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  return withProto;
+}, z.string().url().optional());
+
+// Accept either YYYY-MM-DD or full RFC 3339 datetime; coerce date-only to T00:00:00.000Z
+const dateTimeString = z.preprocess((v) => {
+  if (typeof v !== 'string') return v;
+  const t = v.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return `${t}T00:00:00.000Z`;
+  return t;
+}, z.string().datetime({ offset: true }));
+
+// Optional version of the above (''/null/undefined => undefined)
+const optDateTimeString = z.preprocess((v) => {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v !== 'string') return v;
+  const t = v.trim();
+  if (t === '') return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return `${t}T00:00:00.000Z`;
+  return t;
+}, z.string().datetime({ offset: true }).optional());
+
+// Trim array of strings (optional)
+const optStringArray = z
+  .array(z.preprocess((v) => (typeof v === 'string' ? v.trim() : v), z.string()))
+  .optional();
+
+/**
+ * ==================== Common Schemas ====================
+ */
+
+export const paginationSchema = z.object({
+  page: z.coerce.number().min(1).default(1),
+  limit: z.coerce.number().min(1).max(100).default(20),
+  sortBy: z.string().optional(),
+  sortOrder: z.enum(['asc', 'desc']).default('asc'),
+});
+
+/**
+ * ==================== Project Schemas ====================
+ */
+
+export const projectTypeEnum = z.enum([
+  'RESIDENTIAL',
+  'COMMERCIAL',
+  'CULTURAL',
+  'EDUCATIONAL',
+  'HEALTHCARE',
+  'HOSPITALITY',
+  'INDUSTRIAL',
+  'LANDSCAPE',
+  'MIXED_USE',
+  'PUBLIC',
+  'RELIGIOUS',
+  'RETAIL',
+  'SPORTS',
+  'TRANSPORT',
+  'URBAN_PLANNING',
+  'OTHER',
+]);
+
+export const ribaStageEnum = z.enum([
+  'STAGE_0_STRATEGIC_DEFINITION',
+  'STAGE_1_PREPARATION_BRIEF',
+  'STAGE_2_CONCEPT_DESIGN',
+  'STAGE_3_SPATIAL_COORDINATION',
+  'STAGE_4_TECHNICAL_DESIGN',
+  'STAGE_5_MANUFACTURING_CONSTRUCTION',
+  'STAGE_6_HANDOVER',
+  'STAGE_7_USE',
+]);
+
+export const createProjectSchema = z.object({
+  projectName: reqString(1, 200),
+  projectType: projectTypeEnum,
+  location: reqString(1, 200),
+  yearStart: z.coerce.number().min(1900).max(2100),
+  yearCompletion: z.coerce.number().min(1900).max(2100).optional(),
+  clientName: optString(200),
+  practiceName: reqString(1, 200),
+  projectValue: z.coerce.number().positive().optional(),
+  projectSize: z.coerce.number().positive().optional(),
+
+  // Role & Involvement
+  role: reqString(1, 100),
+  teamSize: z.coerce.number().positive().optional(),
+  responsibilities: z.array(z.string()),
+
+  // RIBA Stages
+  ribaStages: z.array(ribaStageEnum),
+
+  // Project Details
+  briefDescription: reqString(1, 500),
+  detailedDescription: optString(5000),
+  designApproach: optString(2000),
+  keyChallenges: optString(2000),
+  solutionsProvided: optString(2000),
+  sustainabilityFeatures: optString(2000),
+
+  // Skills/Software
+  softwareUsed: z.array(z.string()),
+  skillsDemonstrated: z.array(z.string()),
+
+  // Metadata
+  isAcademic: z.boolean().default(false),
+  isCompetition: z.boolean().default(false),
+  awardsReceived: z.array(z.string()).optional(),
+  featuredPriority: z.coerce.number().min(1).max(10).default(5),
+  tags: z.array(z.string()),
+});
+
+export const updateProjectSchema = createProjectSchema.partial();
+
+export const projectIdSchema = z.object({
+  id: z.string().cuid(),
+});
+
+export const projectQuerySchema = z.object({
+  projectType: projectTypeEnum.optional(),
+  isAcademic: z.coerce.boolean().optional(),
+  isCompetition: z.coerce.boolean().optional(),
+  yearStart: z.coerce.number().optional(),
+  yearEnd: z.coerce.number().optional(),
+  search: z.string().optional(),
+});
+
+/**
+ * ==================== Asset Schemas ====================
+ */
+
+export const assetTypeEnum = z.enum([
+  'IMAGE',
+  'DRAWING',
+  'DIAGRAM',
+  'MODEL_PHOTO',
+  'RENDER',
+  'SKETCH',
+]);
+
+export const drawingTypeEnum = z.enum([
+  'PLAN',
+  'SECTION',
+  'ELEVATION',
+  'DETAIL',
+  'AXONOMETRIC',
+  'PERSPECTIVE',
+  'SITE_PLAN',
+]);
+
+export const assetSizeEnum = z.enum([
+  'FULL_PAGE',
+  'HALF_PAGE',
+  'QUARTER_PAGE',
+  'THIRD_PAGE',
+  'TWO_THIRDS_PAGE',
+]);
+
+export const updateAssetSchema = z.object({
+  title: optString(200),
+  caption: optString(500),
+  assetType: assetTypeEnum.optional(),
+  drawingType: drawingTypeEnum.optional(),
+  scale: optString(50),
+  stage: ribaStageEnum.optional(),
+  displayOrder: z.coerce.number().min(0).optional(),
+  isHeroImage: z.boolean().optional(),
+  preferredSize: assetSizeEnum.optional(),
+  canBeCropped: z.boolean().optional(),
+  focalPointX: z.coerce.number().min(0).max(1).optional(),
+  focalPointY: z.coerce.number().min(0).max(1).optional(),
+});
+
+/**
+ * ==================== CV Schemas ====================
+ */
+
+export const createExperienceSchema = z.object({
+  companyName: reqString(1, 200),
+  positionTitle: reqString(1, 200),
+  location: reqString(1, 200),
+  startDate: dateTimeString,            // accepts YYYY-MM-DD or full ISO
+  endDate: optDateTimeString,           // accepts YYYY-MM-DD, ISO, or omitted
+  isCurrent: z.boolean().default(false),
+  description: reqString(1, 2000),
+  keyProjects: optStringArray,
+  keyAchievements: optStringArray,
+  displayOrder: z.coerce.number().min(0).default(0),
+});
+
+export const updateExperienceSchema = createExperienceSchema.partial();
+
+export const createEducationSchema = z.object({
+  institutionName: reqString(1, 200),
+  degreeType: reqString(1, 100),        // free text allowed; trimmed
+  fieldOfStudy: reqString(1, 200),
+  location: reqString(1, 200),
+  startDate: dateTimeString,            // accepts YYYY-MM-DD or full ISO
+  endDate: optDateTimeString,           // accepts YYYY-MM-DD, ISO, or omitted
+  grade: optString(100),
+  relevantCoursework: optStringArray,
+  displayOrder: z.coerce.number().min(0).default(0),
+});
+
+export const updateEducationSchema = createEducationSchema.partial();
+
+export const skillCategoryEnum = z.enum([
+  'SOFTWARE',
+  'TECHNICAL',
+  'DESIGN',
+  'MANAGEMENT',
+  'COMMUNICATION',
+  'OTHER',
+]);
+
+export const proficiencyLevelEnum = z.enum([
+  'BASIC',
+  'INTERMEDIATE',
+  'ADVANCED',
+  'EXPERT',
+]);
+
+export const createSkillSchema = z.object({
+  category: skillCategoryEnum,
+  skillName: reqString(1, 100),
+  proficiencyLevel: proficiencyLevelEnum,
+  yearsExperience: z.coerce.number().min(0).max(50).optional(),
+  displayOrder: z.coerce.number().min(0).default(0),
+});
+
+export const updateSkillSchema = createSkillSchema.partial();
+
+/**
+ * ==================== Personal Info Schemas ====================
+ */
+
+export const updatePersonalInfoSchema = z.object({
+  name: reqString(1, 200).optional(),
+  professionalTitle: reqString(1, 200).optional(),
+  arbNumber: optString(50),
+  email: z
+    .preprocess((v) => {
+      if (v === null || v === undefined) return undefined;
+      if (typeof v !== 'string') return v;
+      const t = v.trim();
+      return t === '' ? undefined : t;
+    }, z.string().email())
+    .optional(),
+  phone: optString(50),
+  location: optString(200),
+  linkedinUrl: optUrlString,
+  websiteUrl: optUrlString,
+  professionalSummary: optString(1000),
+  careerObjectives: optString(1000),
+});
+
+/**
+ * ==================== Portfolio Schemas ====================
+ */
+
+export const portfolioTypeEnum = z.enum(['SAMPLE', 'FULL']);
+
+export const createPortfolioSchema = z.object({
+  portfolioName: reqString(1, 200),
+  portfolioType: portfolioTypeEnum,
+  templateId: z.string().cuid().optional(),
+  cvIncluded: z.boolean().default(false),
+  projects: z.array(
+    z.object({
+      projectId: z.string().cuid(),
+      displayOrder: z.coerce.number().min(0),
+      includedAssets: z.array(z.string().cuid()),
+    })
+  ),
+  settings: z.record(z.any()).optional(),
+});
+
+/**
+ * ==================== Response Schemas ====================
+ */
+
+export const successResponseSchema = <T extends z.ZodType>(dataSchema: T) =>
+  z.object({
+    success: z.literal(true),
+    data: dataSchema,
+  });
+
+export const errorResponseSchema = z.object({
+  success: z.literal(false),
+  error: z.string(),
+  details: z.any().optional(),
+});
+
+export const paginatedResponseSchema = <T extends z.ZodType>(dataSchema: T) =>
+  z.object({
+    success: z.literal(true),
+    data: z.array(dataSchema),
+    pagination: z.object({
+      page: z.number(),
+      limit: z.number(),
+      total: z.number(),
+      totalPages: z.number(),
+    }),
+  });
+
+// Type exports
+export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
+export type ProjectQuery = z.infer<typeof projectQuerySchema>;
+export type PaginationQuery = z.infer<typeof paginationSchema>;
+===

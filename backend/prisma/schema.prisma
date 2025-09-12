@@ -1,0 +1,241 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== PROJECTS ====================
+
+model Project {
+  id            String      @id @default(cuid())
+  projectName   String
+  projectType   String      // RESIDENTIAL, COMMERCIAL, etc.
+  location      String
+  yearStart     Int
+  yearCompletion Int?
+  clientName    String?
+  practiceName  String
+  projectValue  Float?
+  projectSize   Float?      // in square meters
+  
+  // Role & Involvement
+  role          String      // Part 1 Assistant, Architect, etc.
+  teamSize      Int?
+  responsibilities Json     // Array of strings
+  
+  // RIBA Stages - stored as JSON array
+  ribaStages    Json        // Array of stage strings
+  
+  // Project Details
+  briefDescription String
+  detailedDescription String?
+  designApproach String?
+  keyChallenges String?
+  solutionsProvided String?
+  sustainabilityFeatures String?
+  
+  // Skills/Software - stored as JSON arrays
+  softwareUsed  Json        // Array of strings
+  skillsDemonstrated Json   // Array of strings
+  
+  // Metadata
+  isAcademic    Boolean     @default(false)
+  isCompetition Boolean     @default(false)
+  awardsReceived Json?      // Array of strings
+  featuredPriority Int      @default(5) // 1-10, lower is higher priority
+  tags          Json         // Array of strings
+  
+  // Relations
+  assets        ProjectAsset[]
+  portfolios    PortfolioProject[]
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([projectType])
+  @@index([yearStart])
+  @@index([featuredPriority])
+}
+
+model ProjectAsset {
+  id            String      @id @default(cuid())
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  assetType     String      // IMAGE, DRAWING, DIAGRAM, etc.
+  filePath      String
+  fileName      String
+  fileSize      Int         // in bytes
+  mimeType      String
+  width         Int?
+  height        Int?
+  
+  // Asset Details
+  title         String?
+  caption       String?
+  drawingType   String?     // PLAN, SECTION, ELEVATION, etc.
+  scale         String?     // e.g., "1:100"
+  stage         String?     // RIBA stage
+  displayOrder  Int         @default(0)
+  isHeroImage   Boolean     @default(false)
+  
+  // Layout Hints
+  preferredSize String?     // FULL_PAGE, HALF_PAGE, etc.
+  canBeCropped  Boolean     @default(true)
+  focalPointX   Float?      // 0-1, percentage from left
+  focalPointY   Float?      // 0-1, percentage from top
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([projectId])
+  @@index([displayOrder])
+}
+
+// ==================== CV ====================
+
+model CVExperience {
+  id            String      @id @default(cuid())
+  companyName   String
+  positionTitle String
+  location      String
+  startDate     DateTime
+  endDate       DateTime?
+  isCurrent     Boolean     @default(false)
+  description   String      // Can be long text
+  keyProjects   Json?       // Array of strings
+  keyAchievements Json?     // Array of strings
+  displayOrder  Int         @default(0)
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([displayOrder])
+}
+
+model CVEducation {
+  id            String      @id @default(cuid())
+  institutionName String
+  degreeType    String      // BA, MArch, Part 1, etc.
+  fieldOfStudy  String
+  location      String
+  startDate     DateTime
+  endDate       DateTime?
+  grade         String?
+  relevantCoursework Json?  // Array of strings
+  displayOrder  Int         @default(0)
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([displayOrder])
+}
+
+model CVSkill {
+  id            String      @id @default(cuid())
+  category      String      // SOFTWARE, TECHNICAL, DESIGN, etc.
+  skillName     String
+  proficiencyLevel String   // BASIC, INTERMEDIATE, ADVANCED, EXPERT
+  yearsExperience Int?
+  displayOrder  Int         @default(0)
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([category])
+  @@index([displayOrder])
+}
+
+// ==================== PERSONAL INFO ====================
+
+model PersonalInfo {
+  id            String      @id @default(cuid())
+  name          String
+  professionalTitle String  // e.g., "Architectural Assistant Part 2"
+  arbNumber     String?     // ARB registration number
+  email         String
+  phone         String?
+  location      String
+  linkedinUrl   String?
+  websiteUrl    String?
+  professionalSummary String? // Elevator pitch
+  careerObjectives String?
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+// ==================== APP SETTINGS ====================
+
+model AppSettings {
+  id          String   @id @default("global")
+  colorScheme String   @default("classic")
+  margins     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ==================== PORTFOLIO ====================
+
+model PortfolioTemplate {
+  id            String      @id @default(cuid())
+  templateName  String      @unique
+  description   String?
+  layoutStyle   String
+  fontsConfig   Json        // JSON object with font settings
+  colorScheme   Json        // JSON object with colors
+  pageLayouts   Json        // JSON object with page definitions
+  marginsConfig Json        // JSON object with margin settings
+  isDefault     Boolean     @default(false)
+  
+  portfolios    GeneratedPortfolio[]
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model GeneratedPortfolio {
+  id            String      @id @default(cuid())
+  portfolioName String
+  dateCreated   DateTime    @default(now())
+  templateId    String?
+  template      PortfolioTemplate? @relation(fields: [templateId], references: [id])
+  
+  portfolioType String      // SAMPLE or FULL
+  cvIncluded    Boolean     @default(false)
+  filePath      String?     // Path to generated PDF
+  totalPages    Int?
+  fileSize      Int?        // in bytes
+  
+  // Project selections
+  projects      PortfolioProject[]
+  
+  // Additional settings stored as JSON
+  settings      Json?       // Any additional configuration
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([portfolioType])
+}
+
+// Junction table for many-to-many relationship
+model PortfolioProject {
+  id            String      @id @default(cuid())
+  portfolioId   String
+  portfolio     GeneratedPortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  displayOrder  Int         @default(0)
+  includedAssets Json       // Array of asset IDs to include
+  customLayout  Json?       // Optional custom layout for this project in this portfolio
+  
+  @@unique([portfolioId, projectId])
+  @@index([portfolioId])
+  @@index([projectId])
+}

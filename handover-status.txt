@@ -1,0 +1,368 @@
+Architecture Portfolio System - Project Continuation Guide
+
+🎯 Project Overview
+Goal: Building a database-backed portfolio and CV management system for architects that separates data from presentation, enabling flexible portfolio generation without the common InDesign problem of coupled data and design.
+For: Your girlfriend (architect), personal use, not commercial
+Key Innovation: Data layer separated from presentation layer - enter once, use everywhere
+
+📊 Current Project State
+✅ Completed Phases (Days 1-5)
+
+Phase 1: Foundation
+
+SQLite database with Prisma ORM
+Complete schema for projects, assets, CV, portfolios
+RESTful API with validation
+Seed data with 3 sample projects
+
+
+Phase 2: Core Backend
+
+File upload with Sharp image optimization
+Automatic thumbnail generation
+Asset management endpoints
+Portfolio configuration system
+
+
+Phase 3: Frontend Foundation
+
+React + Vite + TypeScript setup
+Swiss design system (Helvetica, minimal aesthetic)
+API integration with React Query
+Dashboard with statistics
+
+
+Phase 4: Project Management
+
+Projects list with search/filters
+Project detail with asset gallery
+Image lightbox viewer
+Asset upload/delete/reorder
+Hero image selection
+
+
+Phase 5: Project Forms
+
+Comprehensive create/edit forms
+Zod validation
+Dynamic field arrays
+RIBA stages tracking
+
+
+🛠 Tech Stack & Architecture
+
+Backend (/backend)
+Port: 3001
+Stack: Fastify + TypeScript + Prisma + SQLite
+Key Files:
+- prisma/schema.prisma - Database schema
+- src/index.ts - Server with CORS configured for DELETE
+- src/routes/projects.ts - Project CRUD
+- src/routes/cv.ts - CV management
+- src/routes/assets.ts - File handling
+- src/routes/portfolios.ts - Portfolio management
+- src/services/uploadService.ts - Sharp image processing
+
+Frontend (/frontend)
+Port: 5173
+Stack: React + Vite + TypeScript + Tailwind CSS
+Key Files:
+- src/services/api.ts - API service functions
+- src/hooks/useApi.ts - React Query hooks
+- src/components/Layout.tsx - Main layout with sidebar
+- src/pages/* - All page components
+Swiss Design: Black/white, minimal, Helvetica, clean grids
+
+Database Schema
+typescriptCore Entities:
+- Project (with RIBA stages, software, skills arrays as JSON)
+- ProjectAsset (images/PDFs with metadata)
+- CVExperience, CVEducation, CVSkill
+- PersonalInfo
+- GeneratedPortfolio
+- PortfolioTemplate
+
+🚀 Detailed Roadmap - Remaining Work
+
+Phase 6: CV Management UI (Day 6-7)
+Priority: HIGH - Needed for complete portfolios
+
+6.1 CV Page Structure (/cv)
+typescript// src/pages/CV.tsx
+- Tabbed interface: Personal Info | Experience | Education | Skills
+- Each tab is a separate component
+- Live preview panel showing formatted CV
+
+6.2 Personal Info Component
+typescript// src/components/cv/PersonalInfoForm.tsx
+Fields:
+- Name, title, ARB number
+- Contact details
+- Professional summary (rich text)
+- Links (LinkedIn, website)
+
+Implementation:
+- Use existing useUpdatePersonalInfo hook
+- Auto-save on blur
+- Show "saved" indicator
+
+6.3 Experience Management
+typescript// src/components/cv/ExperienceList.tsx
+Features:
+- Timeline view
+- Drag to reorder (displayOrder)
+- Inline edit/delete
+- Add new with modal form
+Key: Date formatting, current job toggle
+
+6.4 Education Management
+typescript// src/components/cv/EducationList.tsx
+Similar to Experience but:
+- Degree type dropdown (Part 1, Part 2, MArch, etc.)
+- Coursework as tag list
+- Grade field
+
+6.5 Skills Matrix
+typescript// src/components/cv/SkillsGrid.tsx
+Layout:
+- Grouped by category (SOFTWARE, TECHNICAL, etc.)
+- Proficiency slider (Basic → Expert)
+- Years experience
+- Quick add common skills
+
+Phase 7: Portfolio Builder (Day 8-10)
+Priority: CRITICAL - Core feature
+
+7.1 Portfolio List Page
+typescript// src/pages/Portfolios.tsx
+- Grid of portfolio cards
+- Show: Name, type (SAMPLE/FULL), project count, date
+- Quick actions: Duplicate, Download PDF, Delete
+- Filter by type
+
+7.2 Create Portfolio Wizard
+typescript// src/pages/CreatePortfolio.tsx
+Step 1: Basic Info
+- Portfolio name
+- Type (Sample 8-10 pages, Full 40+ pages)
+- Include CV? (checkbox)
+
+Step 2: Select Projects
+- Checkbox list with project cards
+- Show project year, type, asset count
+- Drag to reorder
+- For SAMPLE: Limit to 3-5 projects
+
+Step 3: Select Assets per Project
+- For each selected project:
+  - Grid of thumbnails
+  - Checkbox to include/exclude
+  - Set display order
+  - Mark hero images
+
+Step 4: Review & Generate
+- Preview selected content
+- Estimate page count
+- Template selection (for now: Swiss Minimal only)
+- Generate button → Create portfolio record
+
+7.3 Portfolio Detail View
+typescript// src/pages/PortfolioDetail.tsx
+- Show all included projects
+- Asset count per project
+- Generation status
+- Re-generate button
+- Download PDF button (when ready)
+
+Phase 8: PDF Generation - THE BIG ONE (Day 11-15)
+Priority: CRITICAL - Main deliverable
+
+8.1 Install React PDF
+bashnpm install @react-pdf/renderer @react-pdf/unicode-properties
+
+8.2 PDF Template Components
+typescript// src/pdf/templates/SwissMinimal.tsx
+Structure:
+- Document wrapper (A4, 210x297mm)
+- Cover page component
+- Project page layouts (1-2 per page)
+- CV page layout
+- Table of contents
+
+// src/pdf/components/PDFProject.tsx
+- Hero image (full width)
+- Project info sidebar
+- Description text
+- Image grid (2x2 or 3x2)
+- RIBA stages badges
+
+// src/pdf/components/PDFCV.tsx
+- Contact header
+- Professional summary
+- Experience timeline
+- Education list
+- Skills matrix
+
+8.3 PDF Generation Service
+typescript// backend/src/services/pdfGenerator.ts
+Process:
+1. Load portfolio with all relations
+2. Load optimized images
+3. Generate PDF with React PDF
+4. Save to filesystem
+5. Update portfolio record with path
+6. Return download URL
+
+// API endpoint: POST /api/portfolios/:id/generate
+8.4 Asset Optimization for PDF
+typescript// Considerations:
+- Image resolution (150-300 DPI for print)
+- File size limits (keep under 20MB)
+- Color space (CMYK vs RGB)
+- Font embedding
+
+Phase 9: Polish & Advanced Features (Day 16-20)
+9.1 Performance Optimizations
+
+Lazy load images
+Virtual scrolling for long lists
+Debounced search
+Optimistic UI updates
+
+9.2 Advanced PDF Features
+
+Multiple templates
+Custom layouts per project
+Page numbering
+Hyperlinked table of contents
+Cover customization
+
+9.3 Export/Import
+
+Export all data as JSON
+Import from JSON
+Backup/restore functionality
+
+9.4 Drag & Drop Enhancements
+
+Reorder projects in portfolio
+Reorder assets in gallery
+Drag images from desktop to upload
+
+💻 Code Style & Conventions
+TypeScript Conventions
+typescript// Interfaces for data types
+export interface Project { ... }
+
+// Type for form data
+type ProjectFormData = z.infer<typeof projectSchema>;
+
+// Explicit return types for clarity
+const getProject = async (id: string): Promise<Project> => { ... }
+React Patterns
+typescript// Custom hooks for data fetching
+const { data, isLoading, error } = useProjects();
+
+// Form handling with React Hook Form + Zod
+const { register, handleSubmit } = useForm<FormData>({
+  resolver: zodResolver(schema)
+});
+
+// Conditional rendering pattern
+{isLoading ? <Loading /> : <Content />}
+API Pattern
+typescript// All responses follow this structure
+{
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+// React Query for all API calls
+useQuery, useMutation with proper cache invalidation
+Styling (Tailwind Swiss Design)
+css/* Swiss design classes */
+.swiss-button - Black bg, white text
+.swiss-input - Clean borders, minimal style
+.swiss-card - White bg with border
+
+/* Color palette */
+swiss-black: #000000
+swiss-white: #FFFFFF
+swiss-gray-[100-900]: Grayscale
+🔧 Critical Implementation Details
+File Upload Flow
+
+Frontend: Select files → FormData
+Backend: Multipart parsing → Sharp processing
+Storage: /uploads/projects/originals/, /optimized/, /thumbnails/
+Database: Store paths and metadata
+Serving: Static files via Fastify
+
+Image URLs
+typescript// Always construct full URLs
+const imageUrl = `${import.meta.env.VITE_API_URL}/uploads/projects/optimized/${fileName}`;
+const thumbUrl = fileName.replace(/\.[^.]+$/, '_thumb.jpeg');
+Cache Invalidation
+typescript// After mutations, invalidate both list and detail
+queryClient.invalidateQueries({ queryKey: ['projects'] });
+queryClient.invalidateQueries({ queryKey: ['project', id] });
+CORS Configuration
+typescript// Backend must explicitly allow DELETE
+methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']
+
+📝 Next Session Setup
+To Continue:
+
+Open project in VS Code
+Start backend: cd backend && npm run dev
+Start frontend: cd frontend && npm run dev
+Backend: http://localhost:3001
+Frontend: http://localhost:5173
+
+Current Task Priority:
+
+CV Management UI - Required for portfolios
+Portfolio Builder - Core feature
+PDF Generation - Main deliverable
+
+Test Data Available:
+
+3 projects with sample data
+Assets can be uploaded
+CV has sample entries
+1 portfolio template ready
+
+🎯 Success Criteria
+The system is complete when:
+
+✅ Can create/edit projects with full metadata
+✅ Can upload and manage project assets
+TODO: Can manage CV information
+TODO: Can create portfolio configurations
+TODO: Can generate PDF portfolios (A4, print-ready)
+TODO: Can switch between Sample/Full portfolios
+TODO: PDF includes CV section
+TODO: Clean Swiss design throughout
+
+🤝 Handoff Notes
+Working Style:
+
+Build incrementally, test each feature
+Implement → Test → Refine → Document
+Keep Swiss design aesthetic throughout
+No premature optimization
+Focus on working features over perfect code
+
+Key Decisions Made:
+
+SQLite for simplicity (can migrate to PostgreSQL later)
+React PDF for precise control over layouts
+Sharp for image processing
+Swiss design for clean portfolio aesthetic
+Separate data from presentation layer
+
+Current Blockers: None
+Ready for: Phase 6 - CV Management UI implementation
+
+This project is approximately 60% complete. The foundation is solid, all APIs work, and the complex parts (file handling, data structure) are done. Remaining work is primarily UI implementation and PDF generation.
