@@ -97,54 +97,6 @@ Notes
 - Create migration: npm run prisma:migrate
 - Reset (destructive): npm run prisma:reset
 
-## API Overview
-
-Base URL: http://localhost:3001
-
-Common responses
-- Success: { success: true, data: ... }
-- Error: { success: false, error: string, details?: any }
-
-Health and Stats
-- GET /health
-- GET /api/stats
-
-Projects
-- GET /api/projects (filters: projectType, isAcademic, isCompetition, yearStart, yearEnd, search; pagination/sorting)
-- GET /api/projects/:id
-- POST /api/projects
-- PUT /api/projects/:id
-- DELETE /api/projects/:id
-- GET /api/projects/:id/assets
-
-Assets
-- POST /api/assets/upload/:projectId
-- POST /api/assets/upload-multiple/:projectId
-- GET /api/assets/:id
-- PUT /api/assets/:id
-- DELETE /api/assets/:id
-- POST /api/assets/reorder
-- POST /api/assets/:id/set-hero
-
-CV
-- GET /api/cv/personal-info
-- PUT /api/cv/personal-info
-- GET/POST/PUT/DELETE /api/cv/experience[/:id]
-- GET/POST/PUT/DELETE /api/cv/education[/:id]
-- GET/POST/PUT/DELETE /api/cv/skills[/:id]
-- GET /api/cv/all
-
-Portfolios
-- GET /api/portfolios
-- GET /api/portfolios/:id
-- POST /api/portfolios
-- PUT /api/portfolios/:id
-- DELETE /api/portfolios/:id
-- POST /api/portfolios/:id/add-project
-- DELETE /api/portfolios/:portfolioId/remove-project/:projectId
-- GET /api/portfolios/templates
-- POST /api/portfolios/:id/duplicate
-- Planned: POST /api/portfolios/:id/generate (PDF)
 
 ## Design System (Swiss Minimal)
 
@@ -176,8 +128,6 @@ Planned implementation
 - [x] Phase 5: Project Forms (Create/Edit with Zod)
 - [x] Phase 6: CV Management UI (tabs, CRUD, preview)
 - [x] Phase 7: Portfolio Builder (wizard, list/detail, duplicate/delete)
-- [ ] Phase 8: PDF Generation (A4 Swiss Minimal)
-- [ ] Phase 9: Polish & Advanced (perf, multiple templates, import/export)
 
 
 ## License

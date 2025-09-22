@@ -1,0 +1,195 @@
+Here’s how the current “render HTML and turn it into a PDF” pipeline works, what files are involved, and how you can edit both the HTML and CSS. I’ll also point out some accuracy/consistency issues and practical improvements you can make.
+
+High-level architecture
+
+PDF engine: Playwright. The backend launches a headless Chromium browser, navigates to a dedicated “print” route in the frontend that renders an A4 page-by-page HTML layout, applies @media print CSS, waits for images/fonts, and then saves a PDF.
+Data shape: The backend builds a “renderable” JSON object tailored for the Swiss Minimal template (color scheme, margins, project list/hero/images/metadata, optional CV data). The frontend’s print pages use this JSON directly.
+HTML template: Implemented as regular React components that render A4 pages (divs sized to A4), with page-breaks and print CSS. No react-pdf here—just standard DOM + CSS.
+End-to-end flow (Portfolio)
+
+User triggers generation (UI calls POST /api/portfolios/:id/generate)
+
+Backend route: backend/src/routes/portfolios.ts → fastify.post('/portfolios/:id/generate')
+It loads the portfolio, logs some context, and calls generatePortfolioPdfPlaywright.
+Backend prepares renderable data
+
+backend/src/services/portfolioData.ts → buildRenderablePortfolio(id)
+Loads portfolio + projects + assets from Prisma.
+Picks hero image + orders selected images (or all if none selected).
+Normalizes array fields (ribaStages, responsibilities, softwareUsed).
+Computes colorScheme from:
+Per-portfolio settings.colorScheme (preferred), else
+Global AppSettings.colorScheme, default classic.
+Computes margins similarly (portfolio settings override global).
+Produces a renderable object: projects array, hero/images paths, CV data (optional), colorScheme, margins, settings like heroHeightMm, stripHeightMm, etc.
+Backend renders to PDF via Playwright
+
+backend/src/services/playwrightGenerator.ts → generatePortfolioPdfPlaywright(id)
+Computes a print URL pointing at the frontend: /print/portfolio/:id on the configured base URL (FRONTEND_URL or PRINT_BASE_URL).
+Launches chromium, navigates to the URL with waitUntil: 'networkidle'.
+Emulates print media, waits for document.fonts.ready and image.decode, then generates PDF with page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true, margin: 0 }).
+Saves PDF under uploads/portfolios/.pdf and updates DB with filePath and fileSize.
+Frontend “print” route
+
+Route registration: frontend/src/App.tsx
+/print/portfolio/:id → PrintPortfolioPage
+Page: frontend/src/pages/PrintPortfolio.tsx
+Fetches renderable via portfoliosApi.getRenderable → GET /api/portfolios/:id/renderable
+Renders the SwissMinimalPreview component inside a neutral wrapper.
+HTML layout and components
+
+frontend/src/components/portfolio/SwissMinimalPreview.tsx
+Renders a sequence of A4 “pages” as divs. Each page has class print-page, fixed A4 size, and internal content.
+Has a mm→px util (roughly 1mm ≈ 3.7795px) and sets inline styles for width/height and paddings to emulate margins.
+Uses classes like swiss-page-number, swiss-section-title, etc. that are defined in CSS.
+Per-project decision: a simple heuristic shouldUseTwoPageSpread determines whether to print a two-page spread or just a single page for that project. If single-page, it uses the right-page layout only. Page numbers are incremented in sequence.
+CSS for print
+
+frontend/src/index.css
+@media print block: @page A4, margin 0, .print-page class with width/height A4 and page-break-after: always; .avoid-break to reduce orphans.
+Imports print-theme.css and tailwind layers.
+frontend/src/styles/print-theme.css
+Defines CSS variables: --accent, --text-color, etc., and swiss-* utility classes: swiss-cover-title, swiss-section-title, swiss-accent-bar, swiss-page-number, etc.
+End-to-end flow (CV-only)
+
+Frontend “print” route:
+/print/cv → frontend/src/pages/PrintCV.tsx
+Fetches GET /api/cv/renderable and renders a single A4 page (Curriculum Vitae) with swiss styles.
+Backend:
+backend/src/services/cvData.ts → buildRenderableCV (global colorScheme/margins from AppSettings)
+backend/src/services/cvGenerator.ts → generateCvPdfPlaywright (same playlist: navigate to /print/cv, emulate print, PDF)
+backend/src/routes/cv.ts → routes to get renderable and to generate.
+Where to edit the HTML structure
+
+Portfolio pages:
+Primary: frontend/src/components/portfolio/SwissMinimalPreview.tsx
+Cover layout, project left-page and right-page markup, CV page markup at the end if includeCV is true.
+Change headings, re-arrange grid, add/remove sections (e.g., add Awards, Key Challenges).
+Images are created via getAssetUrl from frontend/src/lib/api.ts.
+CV page:
+frontend/src/pages/PrintCV.tsx
+If you want a custom CV-only multi-page layout or reuse the same Swiss components, you can either:
+Extend this page with more sections and multiple “print-page” blocks, or
+Extract a dedicated SwissMinimalCV component similar to SwissMinimalPreview and import it here.
+Where to edit the CSS
+
+Global print CSS and page sizing:
+frontend/src/index.css
+@media print, .print-page, .avoid-break, img max-width.
+Swiss theme tokens and utility classes:
+frontend/src/styles/print-theme.css
+Update CSS variables (--accent, --text-color, etc.).
+Modify the swiss-* class definitions (page number, accent borders, section titles, cover typography).
+Tailwind utility styling (if you prefer to add more utility classes):
+The same index.css file contains the Tailwind @layer base/components utilities.
+How to change color scheme and margins
+
+Global (app-wide defaults):
+UI: frontend/src/pages/Settings.tsx (Theme + Global Margins)
+API: backend/src/routes/settings.ts
+Used by: backend/src/services/portfolioData.ts and backend/src/services/cvData.ts as defaults when a portfolio doesn’t override them.
+Per-portfolio (overrides):
+UI: in the builder wizard: frontend/src/pages/CreatePortfolio.tsx (Swiss Design Settings via PortfolioSettings component)
+Saved into GeneratedPortfolio.settings in DB
+Used by: backend/src/services/portfolioData.ts (settings override AppSettings)
+Where the renderable JSON is built
+
+Portfolio: backend/src/services/portfolioData.ts → buildRenderablePortfolio
+If you want to expose additional project fields to the frontend template (e.g., awards), add them here and then render in SwissMinimalPreview.tsx.
+CV: backend/src/services/cvData.ts → buildRenderableCV
+Where image URLs come from
+
+Backend emits paths like /uploads/projects/optimized/ in the renderable.
+Frontend uses getAssetUrl(path) in frontend/src/lib/api.ts to prepend the backend base URL (VITE_API_URL or default).
+If you change where files are stored or served, update buildRenderable* path creation and/or getAssetUrl accordingly.
+How to test your edits quickly
+
+On-screen preview (with scrolling):
+Portfolio HTML Preview: /portfolios/:id/preview → frontend/src/pages/PortfolioHtmlPreview.tsx (uses the same SwissMinimalPreview component with a scroller)
+Print preview (single-purpose route, no app chrome):
+Portfolio: /print/portfolio/:id → frontend/src/pages/PrintPortfolio.tsx
+CV: /print/cv → frontend/src/pages/PrintCV.tsx
+From these pages, you can also manually Cmd/Ctrl+P to preview, but Playwright uses these URLs when generating PDFs.
+PDF generation:
+Call POST /api/portfolios/:id/generate (or use the UI action on portfolio detail page if present).
+Output is stored in uploads/portfolios/.pdf, and DB gets filePath/fileSize updated.
+Files you’ll typically touch for HTML/CSS changes
+
+Frontend
+src/components/portfolio/SwissMinimalPreview.tsx
+src/pages/PrintPortfolio.tsx
+src/pages/PrintCV.tsx
+src/styles/print-theme.css
+src/index.css
+src/lib/api.ts (only if changing how asset URLs are constructed)
+Backend
+src/services/portfolioData.ts (expose more/less data to the frontend template; color scheme/margins mapping)
+src/services/cvData.ts (CV shape; color scheme/margins mapping)
+src/services/playwrightGenerator.ts and src/services/cvGenerator.ts (only if you need to change the device scale, base URLs, margins, or timing)
+src/routes/portfolios.ts and src/routes/cv.ts (the endpoints already exist; rarely need changes for layout work)
+Notable details and potential improvements
+
+Import path mismatch in SwissMinimalPreview
+The file imports type RenderablePortfolio from '../../../../shared/types/renderable', but the repo has it at frontend/src/types/renderable.ts. This is likely a stray path from an earlier structure.
+Improvement: change the import to import type { RenderablePortfolio } from '../../types/renderable'; (relative path from components/portfolio). This is a non-breaking type-only change that clarifies the source of truth and avoids confusing the toolchain.
+Centralize shouldUseTwoPageSpread and typing
+The heuristic is duplicated “same decision function as in PDF template” comment. Since the “PDF template” is also HTML, centralize this logic (and its type) into a shared helper under src/shared/lib or co-locate in the portfolio feature and import it. Add a unit test to prevent regressions.
+Use mm units directly in CSS
+You currently convert mm to px inline. Browsers (and Playwright) handle mm in CSS correctly, and you’re already using a .print-page class with width/height in mm at print time. Consider:
+Set page wrappers using mm (already done by .print-page).
+Use CSS vars for margins/sizes and apply them in mm to reduce inline style verbosity and rounding differences:
+Example: style={{ '--page-top': ${m.top}mm }} then padding-top: var(--page-top) in CSS.
+Overflow management
+The page containers often use overflow-hidden. If content occasionally overflows (e.g., long descriptions), it will be clipped. Options:
+Reduce font sizes/line-heights in print-theme.css for long sections.
+Allow vertical scrolling and rely on page breaks (more complex; requires calculating splits or changing layout strategy).
+Short-term non-breaking tweak: adjust text sizes (e.g., text-[13px] to text-[12px]) or increase page grids/paddings slightly.
+Accessibility and semantics
+Most images use alt="" which is fine for decorative elements. For content images, consider alt text from captions when meaningful.
+Theme consistency
+The color scheme choices exist in three places:
+Frontend Settings UI options (frontend/src/pages/Settings.tsx → schemes object)
+Backend colorSchemes in portfolioData.ts and cvData.ts
+print-theme.css has optional theme-* classes
+Keep these in sync. If you add a new scheme, update:
+frontend Settings UI options
+backend colorSchemes mapping
+(optionally) theme class in print-theme.css
+Reuse CV layout
+PrintCV.tsx currently renders a single page. If you want consistency with portfolio’s CV section, factor a SwissMinimalCV component and reuse that in both /print/cv and SwissMinimalPreview’s CV section to avoid divergence.
+Data fidelity and localization
+Currency and numeric formatting are very basic (e.g., £ value in millions via toFixed). Consider using Intl.NumberFormat if you need locale-aware formats or currency codes vary.
+CORS and asset URLs
+getAssetUrl constructs absolute URLs to the backend. Ensure CORS is enabled for Playwright to fetch images when the frontend is served from Vite (5173) and the backend is 3001. If you run into issues, set PRINT_BASE_URL in the backend to point at the same host you test from.
+Dev/Prod base URL selection
+Playwright uses PRINT_BASE_URL or FRONTEND_URL. Make sure FRONTEND_URL is set in production (or set PRINT_BASE_URL explicitly) to avoid pointing at a dev Vite server accidentally.
+Minor performance tweaks (optional)
+generators set deviceScaleFactor: 2; this improves image crispness at the cost of performance. If PDFs get too big or generation is slow, experiment with DSF=1 and/or ensure source images are optimized.
+Practical edit examples
+
+Change the accent color or typography tone:
+Edit frontend/src/styles/print-theme.css (variables and swiss-* classes).
+If you want user-configured themes, ensure the scheme exists in Settings (frontend/src/pages/Settings.tsx) and backend colorSchemes.
+Add “Awards” to each project’s right page:
+backend/src/services/portfolioData.ts: include awardsReceived in the renderable (e.g., an array of strings/titles).
+frontend/src/components/portfolio/SwissMinimalPreview.tsx: render a new swiss-accent-border block when awards exist.
+Adjust CSS if needed.
+Tweak image strip heights/margins:
+SwissMinimalPreview.tsx uses sizes.strip, sizes.hero, sizes.tech in mm. You can edit defaults in renderable.settings (via Portfolio Settings UI), or change the fallback defaults in portfolioData.ts or the component. For global style, consider moving to CSS variables.
+In summary
+
+Edit HTML layout: SwissMinimalPreview.tsx (portfolio pages) and PrintCV.tsx (CV-only).
+Edit CSS: print-theme.css and index.css (@media print).
+Edit data shape and defaults: portfolioData.ts and cvData.ts.
+PDF generation is Playwright-based; you typically don’t need to touch playwightGenerator.ts unless you’re changing timings, margins, or base URL logic.
+Test quickly via /portfolios/:id/preview, /print/portfolio/:id, /print/cv, and finally trigger generation via POST /api/portfolios/:id/generate.
+If you want, I can prepare a minimal, non-breaking patch to fix the RenderablePortfolio import path in SwissMinimalPreview and centralize shouldUseTwoPageSpread into a small helper with a type definition.
+
+
+
+
+
+
+
+
+LocalJSRefactor-Repo
